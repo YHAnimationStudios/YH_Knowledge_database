@@ -1,0 +1,7 @@
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"before compaction"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-11-25T10:00:01.000Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"answer before"}]}}
+{"type":"assistant","uuid":"ax","parentUuid":"u1","timestamp":"2026-11-25T10:00:01.500Z","message":{"id":"mx","role":"assistant","content":[{"type":"text","text":"abandoned reply"}]}}
+{"type":"system","subtype":"compact_boundary","uuid":"s1","parentUuid":null,"logicalParentUuid":"a1","timestamp":"2026-11-25T10:00:02.000Z","content":"Conversation compacted"}
+{"type":"user","uuid":"u2","parentUuid":"s1","isCompactSummary":true,"timestamp":"2026-11-25T10:00:03.000Z","message":{"role":"user","content":"This session is being continued from a previous conversation"}}
+{"type":"user","uuid":"u3","parentUuid":"u2","timestamp":"2026-11-25T10:00:04.000Z","message":{"role":"user","content":"after compaction"}}
+{"type":"assistant","uuid":"a2","parentUuid":"u3","timestamp":"2026-11-25T10:00:05.000Z","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"answer after"}]}}

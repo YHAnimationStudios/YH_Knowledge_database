@@ -1,0 +1,83 @@
+# The scheduled task must never point into the Claude Code plugin cache (old versions are deleted
+# after an update) or at a versioned Microsoft Store PowerShell folder. Everything the task runs
+# lives under <state root>\app\<version>\.
+
+function Test-LibrarianVersionedStorePath([string] $Path) {
+    # <...>\WindowsApps\<package folder>\... is versioned; <...>\WindowsApps\pwsh.exe is the stable alias.
+    return $Path -match '(?i)[\\/]WindowsApps[\\/][^\\/]+[\\/]'
+}
+
+function Get-LibrarianPowerShellVersion([string] $Path) {
+    $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+    if ($info.ProductMajorPart -ge 1) { return [version]::new($info.ProductMajorPart, $info.ProductMinorPart) }
+    # An app-execution alias carries no version resource; ask the runtime itself.
+    $text = & $Path -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+    $parsed = $null
+    if ($LASTEXITCODE -eq 0 -and [version]::TryParse((($text | Select-Object -First 1) -replace '[-+].*$', ''), [ref]$parsed)) { return $parsed }
+    return [version]'0.0'
+}
+
+function Select-LibrarianPowerShell([string[]] $Candidates, [string] $Running) {
+    foreach ($candidate in @($Candidates)) {
+        if ([string]::IsNullOrWhiteSpace($candidate) -or (Test-LibrarianVersionedStorePath $candidate) -or
+            -not [IO.File]::Exists($candidate)) { continue }
+        try { $version = Get-LibrarianPowerShellVersion $candidate } catch { continue }
+        if ($version -ge [version]'7.2') { return $candidate }
+    }
+    if ($Running -and -not (Test-LibrarianVersionedStorePath $Running)) { return $Running }
+    throw 'No stable PowerShell 7.2+ path was found. Install PowerShell 7 (the Store app execution alias or the MSI) and run enrollment again.'
+}
+
+function Get-LibrarianPowerShellCandidates {
+    $programFiles = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'PowerShell\7\pwsh.exe'
+    $alias = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\WindowsApps\pwsh.exe'
+    return @($programFiles, $alias)
+}
+
+function Remove-LibrarianAppCopies([string] $StateRoot, [string] $KeepVersion) {
+    $app = Join-Path $StateRoot 'app'
+    if (-not [IO.Directory]::Exists($app)) { return }
+    # Never enumerate or delete through a redirected or broadly shared app folder.
+    Assert-LibrarianPrivatePath $app -Protected
+    foreach ($entry in [IO.Directory]::GetFileSystemEntries($app)) {
+        $name = [IO.Path]::GetFileName($entry)
+        if ($KeepVersion -and $name -ieq $KeepVersion) { continue }
+        try {
+            $attributes = [IO.File]::GetAttributes($entry)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                # A link is removed as a link; its target is never followed.
+                if ($attributes -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($entry, $false) } else { [IO.File]::Delete($entry) }
+            } elseif ($attributes -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($entry, $true) }
+            else { [IO.File]::Delete($entry) }
+        } catch {
+            # A copy may still be running from this folder; the next enrollment prunes it.
+            Write-Warning "Could not remove old Librarian copy '$entry': $($_.Exception.Message)"
+        }
+    }
+}
+
+function Install-LibrarianAppCopy([string] $SourceScripts, [string] $StateRoot, [string] $Version) {
+    if ($Version -cnotmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$' -or $Version.Contains('..')) { throw "Invalid Librarian version '$Version'." }
+    $entry = Join-Path $SourceScripts 'Sync-AnimTeamSessions.ps1'
+    if (-not [IO.File]::Exists($entry)) { throw 'Sync-AnimTeamSessions.ps1 was not found next to the enrollment script.' }
+    $app = Join-Path $StateRoot 'app'
+    $target = Join-Path $app $Version
+    New-LibrarianPrivateDirectory $app
+    New-LibrarianPrivateDirectory $target
+    $unblock = [bool](Get-Command Unblock-File -ErrorAction SilentlyContinue)
+    foreach ($file in [IO.Directory]::GetFiles($SourceScripts, '*.ps1')) {
+        $destination = Join-Path $target ([IO.Path]::GetFileName($file))
+        $stage = $destination + ".$([guid]::NewGuid().ToString('N')).tmp"
+        try {
+            [IO.File]::Copy($file, $stage, $true)
+            # Scripts extracted from a downloaded zip carry Zone.Identifier; the scheduled task runs
+            # under the default execution policy, which refuses blocked scripts.
+            if ($unblock) { try { Unblock-File -LiteralPath $stage -ErrorAction Stop } catch { } }
+            [IO.File]::Move($stage, $destination, $true)
+        } finally {
+            if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
+        }
+    }
+    # Older versions are pruned by the caller only after the scheduled task points at this copy.
+    return (Join-Path $target 'Sync-AnimTeamSessions.ps1')
+}

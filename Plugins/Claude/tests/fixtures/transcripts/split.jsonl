@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"question"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-11-25T10:00:01.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"A"}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-11-25T10:00:02.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}
+{"type":"assistant","uuid":"a3","parentUuid":"a2","timestamp":"2026-11-25T10:00:03.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"B"}]}}

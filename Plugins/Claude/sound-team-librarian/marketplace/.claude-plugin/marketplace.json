@@ -1,0 +1,8 @@
+{
+  "name": "sound-team-tools",
+  "owner": { "name": "YH Animation Studios" },
+  "plugins": [
+    { "name": "sound-team-librarian", "source": "./plugins/sound-team-librarian",
+      "description": "Evening Claude Code session backup for the Sound team.", "version": "0.1.0" }
+  ]
+}
