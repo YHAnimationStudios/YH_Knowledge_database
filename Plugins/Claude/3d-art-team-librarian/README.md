@@ -1,6 +1,6 @@
 # 3D Art Team Librarian
 
-3D Art Team Librarian backs up a team member's saved Claude Code sessions to their seat-email folder in [Usage data](../../../Usage%20data/). The Windows task commits changed sessions and optional session pictures together at 10:00 PM local time and checks for missed evenings.
+3D Art Team Librarian backs up a team member's saved Claude Code sessions to their seat-email folder in [Usage data](../../../Usage%20data/3D%20art%20team/). The Windows task commits changed sessions and optional session pictures together at 10:00 PM local time and checks for missed evenings.
 
 ## Current release
 

@@ -40,6 +40,7 @@ function Get-TeamTokens($t) {
         '{{TEAM_SLUG}}'     = $t.Slug
         '{{DISPLAY_NAME}}'  = $t.Display
         '{{TEAM_FOLDER}}'   = $t.Folder
+        '{{TEAM_FOLDER_URL}}' = $t.Folder.Replace(' ', '%20')
         '{{TEAM_ID}}'       = $t.Id
         '{{MEMBER_PHRASE}}' = $t.Member
         '{{PLUGIN_NAME}}'   = "$($t.Slug)-team-librarian"

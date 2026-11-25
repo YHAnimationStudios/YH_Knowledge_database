@@ -56,6 +56,13 @@ A successful upload records the Git commit. An evening with no changes records a
 
 ## Check the result
 
+Open a new PowerShell 7 window and look up the scripts folder again (the same lookup as install step 4), then run the status command.
+
+```powershell
+$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -eq 'character-art-team-librarian@character-art-team-tools' } | Select-Object -First 1
+$scripts = Join-Path $p.installPath 'scripts'
+```
+
 ```powershell
 & "$scripts\Configure-AnimLibrarian.ps1" -Status
 ```
@@ -74,18 +81,21 @@ The status shows the local deadline, most recent due evening, completion receipt
 
 Common `lastAttempt.reason` values:
 
+- `PublishFailed`: the upload to GitHub failed, most often because the workstation is offline or the push was rejected.
 - `AccountChanged`: Claude Code is signed out or signed in as a different account than the enrolled seat.
 - `CollectionIncomplete` or `CollectionFailed`: the sessions could not be read completely.
 - `ConflictingSessionVersions`: two different versions of one session were found.
 - `DestinationVisibilityUnverified`: the repository's visibility could not be confirmed, so nothing is pushed.
 - `UsageLayoutNotActive`: the repository's storage layout is not active yet.
 
-All of them retry on the normal schedule.
+All of them retry on the normal schedule. Running `Sync-AnimTeamSessions.ps1` may also report `InactiveEnrollment`, which means sync is disabled or the enrollment was replaced by another account, so nothing is retried.
 
 ## Disable
 
-To stop this workstation's future uploads and remove its scheduled task, run the following command before uninstalling. Documents already committed stay in GitHub.
+To stop this workstation's future uploads and remove its scheduled task, run the following commands before uninstalling. In a fresh shell, the first two lines look up the scripts folder. Documents already committed stay in GitHub.
 
 ```powershell
+$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -eq 'character-art-team-librarian@character-art-team-tools' } | Select-Object -First 1
+$scripts = Join-Path $p.installPath 'scripts'
 & "$scripts\Configure-AnimLibrarian.ps1" -DisableAccountSync
 ```

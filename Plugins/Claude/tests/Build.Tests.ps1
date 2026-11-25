@@ -83,6 +83,17 @@ Describe 'Build-ClaudeLibrarians' {
         }
     }
 
+    It 'links the team README to the team usage folder' {
+        $out = Join-Path $TestDrive 'link'
+        & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
+        $readme = [IO.File]::ReadAllText((Join-Path $out 'anim-team-librarian/README.md'))
+        $readme | Should -Match ([regex]::Escape('](../../../Usage%20data/Animators%20team/)'))
+        # Resolve the link from the README's real location in the repo.
+        $repoRoot = Split-Path -Parent (Split-Path -Parent $script:ClaudeRoot)
+        $target = Join-Path $repoRoot 'Plugins/Claude/anim-team-librarian/../../../Usage data/Animators team'
+        [IO.Path]::GetFullPath($target) | Should -Exist
+    }
+
     Context 'whole-template rendering' {
         BeforeAll {
             # Copy of the real template plus a team-root file (as Task 9's README.md will be).
