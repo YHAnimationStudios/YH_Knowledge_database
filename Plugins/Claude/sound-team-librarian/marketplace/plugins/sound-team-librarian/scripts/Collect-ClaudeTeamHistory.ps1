@@ -23,6 +23,9 @@ $identityPinned = $false
 $written = [Collections.Generic.List[string]]::new()
 $imageSessions = @{}
 $imageRoot = $null
+if ($PSBoundParameters.ContainsKey('ProfileRoot') -and [string]::IsNullOrWhiteSpace($ProfileRoot)) {
+    throw [ArgumentException]::new('ProfileRoot must not be blank.')
+}
 $paths = Get-ClaudePaths $ProfileRoot
 $dateFormat = "yyyy-MM-ddTHH:mm:ss.FFFFFFF'Z'"
 
@@ -122,9 +125,9 @@ function Read-SessionDocument([string] $Id, [IO.FileInfo] $File, $State) {
     $messages = ConvertTo-ClaudeMessages $branch
     $count = 0
     foreach ($message in $messages) { Add-Message $message $State; $count++ }
-    $first = $records | Where-Object { $_['timestamp'] -is [string] } | Select-Object -First 1
+    $first = $records | Where-Object { $null -ne $_['timestamp'] } | Select-Object -First 1
     $created = if ($first) { ConvertTo-ClaudeTime $first['timestamp'] } else { [datetimeoffset]::new($File.CreationTimeUtc) }
-    $updated = if ($branch.Count -and $branch[$branch.Count - 1]['timestamp'] -is [string]) {
+    $updated = if ($branch.Count -and $null -ne $branch[$branch.Count - 1]['timestamp']) {
         ConvertTo-ClaudeTime $branch[$branch.Count - 1]['timestamp']
     } else { $created }
     $header = [ordered]@{schema=1;updatedAt=$updated.ToUnixTimeSeconds();messages=$count} | ConvertTo-Json -Compress

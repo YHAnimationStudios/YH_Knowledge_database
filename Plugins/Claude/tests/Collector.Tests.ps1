@@ -178,4 +178,33 @@ function Read-ClaudeIdentity([string] `$ConfigPath) {
         $text | Should -Match '\[Image attachment\]'
         Test-Path (Join-Path $out 'images') | Should -BeFalse
     }
+
+    It 'uses transcript timestamps when ConvertFrom-Json has no -DateKind (PowerShell 7.2-7.4)' {
+        $copy = Join-Path (Get-TestDriveRoot) ('nodk-' + [guid]::NewGuid().ToString('N'))
+        Copy-Item $script:Scripts $copy -Recurse
+        $transcript = Join-Path $copy 'ClaudeTranscript.ps1'
+        $source = Get-Content $transcript -Raw
+        $patched = $source -replace '(?m)^\$script:TranscriptHasDateKind = .*$', '$script:TranscriptHasDateKind = $false'
+        $patched | Should -Not -Be $source
+        Set-Content $transcript $patched
+        $root = New-Profile
+        $guid = Add-Session $root 'basic'
+        $stamps = @(Select-String -Path (Join-Path $root ".claude/projects/p1/$guid.jsonl") -Pattern '"timestamp":"([^"]*)"' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value })
+        $first = [datetimeoffset]::Parse($stamps[0], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+        $last = [datetimeoffset]::Parse($stamps[-1], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+        $out = New-Out
+        & (Join-Path $copy 'Collect-ClaudeTeamHistory.ps1') -ProfileRoot $root -OutputDirectory $out | Out-Null
+        $text = Get-Content (Join-Path $out "$guid.md") -Raw
+        $fmt = "yyyy-MM-ddTHH:mm:ss.FFFFFFF'Z'"
+        $text | Should -Match ([regex]::Escape("Created (UTC): $($first.UtcDateTime.ToString($fmt, [Globalization.CultureInfo]::InvariantCulture))"))
+        $text | Should -Match ([regex]::Escape("Updated (UTC): $($last.UtcDateTime.ToString($fmt, [Globalization.CultureInfo]::InvariantCulture))"))
+        $text | Should -Match ([regex]::Escape("`"updatedAt`":$($last.ToUnixTimeSeconds()),"))
+    }
+
+    It 'throws for a blank -ProfileRoot instead of using the real profile' {
+        foreach ($blank in '', '   ') {
+            { & $script:Collector -ProfileRoot $blank -IdentityOnly } | Should -Throw -ExceptionType ([ArgumentException])
+        }
+    }
 }
