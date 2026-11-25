@@ -21,6 +21,16 @@ Describe 'ClaudeSession' {
         $id.userId | Should -BeExactly $script:Uuid
     }
 
+    It 'reads identity when project keys differ only by case' {
+        # Claude Code on Windows records the same project folder under different drive-letter casing.
+        $json = '{"projects":{"E:/Asset generator":{"a":1},"e:/Asset generator":{"a":2}},' +
+            '"oauthAccount":{"emailAddress":"seat.one@studio.org","accountUuid":"' + $script:Uuid + '"}}'
+        $p = Write-Config 'case.json' $json
+        $id = Read-ClaudeIdentity $p
+        $id.email | Should -BeExactly 'seat.one@studio.org'
+        $id.userId | Should -BeExactly $script:Uuid
+    }
+
     It 'rejects a signed-out config' {
         $p = Write-Config 'out.json' '{}'
         { Read-ClaudeIdentity $p } | Should -Throw -ExceptionType ([UnauthorizedAccessException])
