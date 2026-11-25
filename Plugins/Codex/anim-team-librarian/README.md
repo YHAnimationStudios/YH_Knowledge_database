@@ -1,6 +1,6 @@
 # Anim Team Librarian
 
-Anim Team Librarian backs up a team member’s saved Codex chats to their seat-email folder in [Codex usage data](../../Animators%20team/Codex%20usage%20data/). The Windows task commits changed chats and optional session pictures together at 10:00 PM local time and checks for missed evenings.
+Anim Team Librarian backs up a team member’s saved Codex chats to their seat-email folder in [Codex usage data](../../../Animators%20team/Codex%20usage%20data/). The Windows task commits changed chats and optional session pictures together at 10:00 PM local time and checks for missed evenings.
 
 ## Current release
 

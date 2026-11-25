@@ -13,4 +13,4 @@ At **10:00 PM local time**, each enrolled workstation checks its saved active an
 
 ## Enroll or upgrade a workstation
 
-Download [Anim Team Librarian](../../Plugins/anim-team-librarian/) and follow its installation instructions. To include pictures, run `Configure-AnimLibrarian.ps1 -EnableAccountSync -IncludeImages` from the installed scripts folder. Use `Configure-AnimLibrarian.ps1 -Status` to check the latest evening receipt and commit.
+Download [Anim Team Librarian](../../Plugins/Codex/anim-team-librarian/) and follow its installation instructions. To include pictures, run `Configure-AnimLibrarian.ps1 -EnableAccountSync -IncludeImages` from the installed scripts folder. Use `Configure-AnimLibrarian.ps1 -Status` to check the latest evening receipt and commit.
