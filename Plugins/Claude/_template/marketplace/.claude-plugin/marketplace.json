@@ -1,0 +1,8 @@
+{
+  "name": "{{MARKETPLACE}}",
+  "owner": { "name": "YH Animation Studios" },
+  "plugins": [
+    { "name": "{{PLUGIN_NAME}}", "source": "./plugins/{{PLUGIN_NAME}}",
+      "description": "Evening Claude Code session backup for the {{TEAM_FOLDER}}.", "version": "{{VERSION}}" }
+  ]
+}

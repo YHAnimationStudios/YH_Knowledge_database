@@ -1,0 +1,6 @@
+{
+  "name": "{{PLUGIN_NAME}}",
+  "version": "{{VERSION}}",
+  "description": "Back up an enrolled seat's Claude Code sessions and optional pictures to the team GitHub repository every evening.",
+  "author": { "name": "YH Animation Studios" }
+}

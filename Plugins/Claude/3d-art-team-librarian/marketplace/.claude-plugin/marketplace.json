@@ -1,0 +1,8 @@
+{
+  "name": "3d-art-team-tools",
+  "owner": { "name": "YH Animation Studios" },
+  "plugins": [
+    { "name": "3d-art-team-librarian", "source": "./plugins/3d-art-team-librarian",
+      "description": "Evening Claude Code session backup for the 3D art team.", "version": "0.1.0" }
+  ]
+}
