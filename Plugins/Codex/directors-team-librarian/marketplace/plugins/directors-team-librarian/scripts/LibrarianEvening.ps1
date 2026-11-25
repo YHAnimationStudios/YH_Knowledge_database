@@ -42,7 +42,8 @@ function Get-LibrarianEveningStatus($Config,[string]$Seat) {
     $state.pending = [bool]($state.latestDueDate -and (!$complete -or $state.latestDueDate -gt $complete.batchDate))
     $state.overdue = $state.pending -and $now.DateTime -gt $due
     $state.status = if ($state.pending) {
-        if ($attempt -and $attempt.batchDate -ceq $state.latestDueDate) { 'RetryPending' } else { 'Due' }
+        if ($attempt -and $attempt.status -ceq 'RetryPending' -and $attempt.batchDate -le $state.latestDueDate -and
+            (!$complete -or $attempt.batchDate -gt $complete.batchDate)) { 'RetryPending' } else { 'Due' }
     } elseif ($state.currentReceipt) { 'Completed' } else { 'Waiting' }
     return $state
 }
@@ -128,11 +129,13 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
     $stage = $null
     $frozen = Join-Path $Seat ('evening-' + $date)
     $requestedImages = $Config.includeImages -is [bool] -and $Config.includeImages
+    $destination = "Usage data/Directors team/$($Config.email)/Codex"
     $includeImages = $requestedImages
     $imageCounters = @('imageReferences','imagesAvailable','imagesUnavailable','imageFiles')
     $attempt = [ordered]@{enrollmentId=$Config.enrollmentId;batchDate=$date;checkedAtLocal=$Status.checkedAtLocal
         status='RetryPending';reason='AccountVerificationFailed';activeThreads=0;archivedThreads=0;documents=0
         includeImages=$includeImages;imageReferences=$null;imagesAvailable=$null;imagesUnavailable=$null;imageFiles=$null;pushedImages=$null
+        layoutVersion=2;destination=$destination;provisionedTools=$null
         skipped=0;failures=0;changed=$null;unchanged=0;older=0;conflicts=0;commit=$null;head=$null;outcome=$null}
     try {
         if (-not (Test-LibrarianBinding $Config (Get-LibrarianIdentity))) { $attempt.reason='AccountChanged'; throw 'Hold' }
@@ -143,9 +146,11 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
         $recovering = [IO.Directory]::Exists($frozen)
         $published = $null
         $publicationStarted = $false
+        $verifyLegacy = $false
         if ($recovering) {
             $collection = Get-LibrarianEveningRecord $frozen 'collection.json'
-            if (!$collection -or ($collection.PSObject.Properties['includeImages'] -and $collection.includeImages -isnot [bool]) -or
+            if (!$collection -or ($collection.PSObject.Properties['layoutVersion'] -and $collection.layoutVersion -ne 2) -or
+                ($collection.PSObject.Properties['includeImages'] -and $collection.includeImages -isnot [bool]) -or
                 ($collection.PSObject.Properties['publicationStarted'] -and $collection.publicationStarted -isnot [bool])) {
                 throw 'Invalid frozen evening scope.'
             }
@@ -153,7 +158,17 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
             $published = Get-LibrarianEveningRecord $frozen 'publication.json'
             $candidatePath = Join-Path $frozen 'publish-candidate.json'
             Assert-LibrarianPrivatePath $candidatePath
-            $publicationStarted = [bool]$collection.publicationStarted -or [IO.File]::Exists($candidatePath)
+            $hasCandidate = [IO.File]::Exists($candidatePath)
+            $publicationStarted = [bool]$collection.publicationStarted -or $hasCandidate
+            # 0.4 text batches did not journal entry into the publisher. A missing
+            # candidate alone cannot prove that a recovered snapshot was never pushed.
+            if ($published) {
+                $verifyLegacy = !$published.PSObject.Properties['layoutVersion']
+            } elseif (!$collection.PSObject.Properties['layoutVersion']) {
+                $uncertainWithoutCandidate = !$hasCandidate -and (!$includeImages -or $publicationStarted)
+                $revokedCandidate = $hasCandidate -and $includeImages -and !$requestedImages
+                $verifyLegacy = $uncertainWithoutCandidate -or $revokedCandidate
+            }
             if ($includeImages -and !$requestedImages -and !$published -and !$publicationStarted) {
                 # Recollect only if the snapshot never entered the publisher.
                 Remove-LibrarianEveningStage $Seat $frozen
@@ -187,7 +202,7 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
         if ($attempt.documents -ne $counts.documents -or ($includeImages -and
             ($attempt.imageFiles -ne $counts.imageFiles -or $attempt.imageFiles -gt $attempt.imagesAvailable -or
             $attempt.imageReferences -ne ($attempt.imagesAvailable + $attempt.imagesUnavailable)))) { throw 'Hold' }
-        if ($includeImages -and !$requestedImages -and !$published) { $attempt.reason='SnapshotImageSettingChanged'; throw 'Hold' }
+        if ($includeImages -and !$requestedImages -and !$published -and !$verifyLegacy) { $attempt.reason='SnapshotImageSettingChanged'; throw 'Hold' }
         $attempt.reason = 'EnrollmentVerificationFailed'
         $gate = Open-LibrarianLock (Join-Path $Directory 'enrollment.lock')
         try {
@@ -199,7 +214,8 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
             $attempt.reason = 'AccountVerificationFailed'
             if (-not (Test-LibrarianBinding $Config (Get-LibrarianIdentity))) { $attempt.reason='AccountChanged'; throw 'Hold' }
             $attempt.reason = 'SnapshotFailed'
-            $summary = @{includeImages=$includeImages}
+            $summary = @{layoutVersion=2;includeImages=$includeImages}
+            if ($recovering -and !$collection.PSObject.Properties['layoutVersion']) { $summary.Remove('layoutVersion') }
             foreach ($name in $counters) { $summary[$name] = $attempt[$name] }
             if (!$recovering) {
                 Write-LibrarianJson (Join-Path $stage 'collection.json') $summary
@@ -208,30 +224,38 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
                 $docs = Join-Path $frozen 'documents'
             }
             $recorded = $null -ne $published
-            if (!$recorded -and $includeImages -and !$collection.publicationStarted) {
+            if (!$recorded -and !$verifyLegacy -and !$collection.publicationStarted) {
                 # The Git candidate can be lost after an accepted push. This independent
                 # boundary prevents a scope change from turning a retry into a new batch.
                 $summary.publicationStarted = $true
                 Write-LibrarianJson (Join-Path $frozen 'collection.json') $summary -Replace
             }
             $attempt.reason = 'PublishFailed'
-            if (!$recorded) {
+            if (!$recorded -or $verifyLegacy) {
                 $publishArgs = @{DocumentDirectory=$docs; Email=$Config.email; StateDirectory=$Seat
                     RequireCompleteBatch=$true; BatchDate=$date; ReceiptDirectory=$frozen}
+                if ($verifyLegacy) { $publishArgs.VerifyRecordedPublication = $true }
                 if ($includeImages) { $publishArgs.IncludeImages = $true; $attempt.pushedImages = $null }
                 $attempt.changed = $null
                 $published = & (Join-Path $PSScriptRoot 'Publish-AnimTeamSessions.ps1') @publishArgs 2>$null | ConvertFrom-Json
             }
+            if ($published.layoutVersion -ne 2 -or $published.destination -cne $destination) { throw 'Unverified usage destination.' }
             Assert-LibrarianCounts $published @('pushed','unchanged','older','conflicts','deferred')
             $pushedImages = 0
             if ($published.PSObject.Properties['pushedImages']) {
                 Assert-LibrarianCounts $published @('pushedImages')
                 $pushedImages = $published.pushedImages
             } elseif ($includeImages) { throw 'Missing image publication count.' }
+            $tools = 0
+            if ($published.PSObject.Properties['provisionedTools']) {
+                Assert-LibrarianCounts $published @('provisionedTools')
+                $tools=$published.provisionedTools
+                if ($tools -gt 2) { throw 'Invalid tool directory count.' }
+            }
             if ($pushedImages -gt $counts.imageFiles) { throw 'Invalid image publication total.' }
             if (($published.pushed + $published.unchanged + $published.older + $published.conflicts + $published.deferred) -ne $attempt.documents) { throw 'Invalid publication totals.' }
             if ($published.conflicts -or $published.deferred) {
-                if ($published.pushed -or $pushedImages) { throw 'Invalid atomic conflict receipt.' }
+                if ($published.pushed -or $pushedImages -or $tools) { throw 'Invalid atomic conflict receipt.' }
                 if (!$recovering) { $attempt.changed = 0; $attempt.pushedImages = 0 }
                 $attempt.conflicts = $published.conflicts
                 $attempt.reason = 'ConflictingSessionVersions'
@@ -241,16 +265,17 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
                 throw 'Hold'
             }
             $objectId = '^(?:[a-f0-9]{40}|[a-f0-9]{64})$'
-            if (($attempt.documents -gt 0 -and $published.head -cnotmatch $objectId) -or
-                (($published.pushed -or $pushedImages) -and $published.commit -cnotmatch $objectId) -or
-                (!$published.pushed -and !$pushedImages -and ($published.commit -or $published.recovered))) { throw 'Invalid publication receipt.' }
+            $changed = $published.pushed -or $pushedImages -or $tools
+            if ($published.head -cnotmatch $objectId -or ($changed -and $published.commit -cnotmatch $objectId) -or
+                (!$changed -and ($published.commit -or $published.recovered))) { throw 'Invalid publication receipt.' }
             $attempt.reason = 'CheckpointFailed'
-            if (!$recorded) { $published | Add-Member -NotePropertyName verifiedAfterRetry -NotePropertyValue $recovering }
+            if (!$recorded) { $published | Add-Member -Force -NotePropertyName verifiedAfterRetry -NotePropertyValue $recovering }
             $attempt.changed = $published.pushed
             $attempt.pushedImages = $pushedImages
+            $attempt.provisionedTools = $tools
             foreach ($name in 'unchanged','older','commit','head') { $attempt[$name] = $published.$name }
             if ($published.recovered) { $attempt.outcome = 'RecoveredCommit' }
-            elseif ($attempt.changed -or $attempt.pushedImages) { $attempt.outcome = 'Changed' }
+            elseif ($changed) { $attempt.outcome = 'Changed' }
             elseif ($attempt.documents -gt 0 -and ($published.verifiedAfterRetry -or $published.uncertain)) {
                 # Identical/superseded content proves the frozen snapshot is covered.
                 # The fetched head alone does not prove who originally published it.
@@ -258,7 +283,7 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
                 if ($includeImages) { $attempt.pushedImages = $null }
                 $attempt.outcome = 'VerifiedAfterRetry'
             } else { $attempt.outcome = 'NoChanges' }
-            if (!$recorded) { Write-LibrarianJson (Join-Path $frozen 'publication.json') $published }
+            if (!$recorded -or $verifyLegacy) { Write-LibrarianJson (Join-Path $frozen 'publication.json') $published -Replace }
             $attempt.checkedAtLocal = (Get-LibrarianLocalNow).ToString('o')
             $complete = [ordered]@{}
             foreach ($name in $attempt.Keys) { $complete[$name] = $attempt[$name] }
@@ -268,6 +293,9 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
         } finally { $gate.Dispose() }
     } catch {
         # Persist only classified reasons. Collector and Git exceptions can contain private data.
+        if ($_.Exception.Data['reason'] -cin 'UsageLayoutNotActive','MigrationVerificationRequired') {
+            $attempt.reason = $_.Exception.Data['reason']
+        }
         Write-LibrarianJson (Join-Path $Seat 'evening-attempt.json') $attempt -Replace
         return $false
     } finally {

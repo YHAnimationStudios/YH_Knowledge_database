@@ -1,11 +1,11 @@
 {
   "name": "character-art-team-librarian",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Back up this seat’s saved Codex chats and optional pictures to the Character art team folder in the team GitHub repository.",
   "interface": {
     "displayName": "Character Art Team Librarian",
     "shortDescription": "Character Art Team evening chat backup",
-    "longDescription": "At 22:00 local time, commit saved chats and optional pictures under Character art team/Codex usage data/<seat-email>/. Missed evenings catch up at the next check.",
+    "longDescription": "At 22:00 local time, commit saved chats and optional pictures under Usage data/Character art team/<seat-email>/Codex/. Missed evenings catch up at the next check.",
     "category": "Productivity"
   },
   "skills": "./skills/",

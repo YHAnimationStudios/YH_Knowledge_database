@@ -4,12 +4,15 @@ At **22:00 (10:00 PM) in each workstation’s local time zone**, Directors Team 
 
 ```text
 YHAnimationStudios/YH_Knowledge_database
-└── Directors team/Codex usage data/<seat-email>/
-    ├── <session-id>.md
-    └── images/<session-id>/<sha256>.png
+└── Usage data/Directors team/<seat-email>/
+    ├── Codex/
+    │   ├── <session-id>.md
+    │   └── images/<session-id>/<sha256>.png
+    ├── Claude/
+    └── Opencode/
 ```
 
-The plugin creates the folders automatically. A team member using multiple workstations can enroll each one into the same seat folder. It exports visible user and assistant messages and masks common credential formats in text. Repository readers can read the chats and see everything visible in shared pictures.
+The plugin creates the folders automatically. Claude and Opencode are reserved for their respective collectors. A team member using multiple workstations can enroll each one into the same seat folder. It exports visible user and assistant messages and masks common credential formats in text. Repository readers can read the chats and see everything visible in shared pictures.
 
 With pictures enabled, the next due batch checks existing active and archived chats as well as new ones. An attached or generated picture appears at its original position in the Markdown. The folder immediately above the picture matches the session filename without the extension. A repeated picture uses one file within a session and gets a separate path in every other session where it appears.
 
@@ -26,10 +29,10 @@ The exporter saves a PNG of each recoverable still image. It can use image data 
    $release = codex plugin add directors-team-librarian@directors-team-tools --json | ConvertFrom-Json
    $scripts = Join-Path $release.installedPath 'scripts'
    & "$scripts\Collect-AnimTeamHistory.ps1" -InventoryOnly
-   & "$scripts\Configure-AnimLibrarian.ps1" -EnableAccountSync -EveningTime '22:00' -IncludeImages
+   & "$scripts\Configure-AnimLibrarian.ps1" -EnableAccountSync
    ```
 
-Enrollment creates a visible Windows scheduled task under the current Windows user. Run enrollment on each workstation after installing or upgrading. On first enrollment, omit `-IncludeImages` for text-only sharing. Re-running enrollment on an active seat preserves its choice unless you explicitly pass `-IncludeImages` or `-IncludeImages:$false`. Newly enabled picture sharing includes historical chats at the next due batch. The first scheduled evening is the enrollment date. Enrolling after the deadline checks that evening immediately.
+Run enrollment on each workstation after installing or upgrading. On an existing active seat, this points the Windows task at version 0.5.0 and preserves the configured time, picture setting, and completed evening receipts. On first enrollment the default is 22:00 local, with text-only sharing. Add `-IncludeImages` to include pictures and backfill eligible older chats. Pass `-IncludeImages:$false` to turn picture sharing off. Enrolling after the deadline checks that evening immediately.
 
 ## Evening batches and missed runs
 
@@ -50,6 +53,8 @@ The status shows the local deadline, most recent due evening, completion receipt
 | `Waiting` | The first scheduled evening is still ahead. |
 | `Due` or `RetryPending` | A deadline has passed. Check `lastAttempt.reason` for a failed attempt. |
 | `Completed` | `currentReceipt.batchDate` identifies the completed evening. `Changed` and `RecoveredCommit` include the commit SHA. `NoChanges` means the check succeeded without a new commit. `VerifiedAfterRetry` means Git already covers that batch, but the exact original commit could not be established. |
+
+During the storage upgrade, `UsageLayoutNotActive` means the workstation is waiting for the repository’s new layout. It will retry on its normal schedule. `MigrationVerificationRequired` means an interrupted batch needs reconciliation. Keep its local receipt and staged batch, and have the repository maintainer compare the recorded commit with the migrated files before retrying.
 
 To stop this workstation’s future uploads and remove its scheduled task, run the following command before uninstalling. Documents already committed stay in GitHub.
 

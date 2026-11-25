@@ -1,11 +1,11 @@
 {
   "name": "sound-team-librarian",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Back up this seat’s saved Codex chats and optional pictures to the Sound team folder in the team GitHub repository.",
   "interface": {
     "displayName": "Sound Team Librarian",
     "shortDescription": "Sound Team evening chat backup",
-    "longDescription": "At 22:00 local time, commit saved chats and optional pictures under Sound team/Codex usage data/<seat-email>/. Missed evenings catch up at the next check.",
+    "longDescription": "At 22:00 local time, commit saved chats and optional pictures under Usage data/Sound team/<seat-email>/Codex/. Missed evenings catch up at the next check.",
     "category": "Productivity"
   },
   "skills": "./skills/",

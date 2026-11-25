@@ -60,7 +60,7 @@ function Open-CodexSession {
     $script:server = [Diagnostics.Process]::Start($start)
     $script:stderrDrain = $server.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
     $null = Invoke-CodexRpc 'initialize' @{
-        clientInfo = @{name='directors_team_librarian'; title='Directors Team Librarian'; version='0.4.0'}
+        clientInfo = @{name='directors_team_librarian'; title='Directors Team Librarian'; version='0.5.0'}
         capabilities = @{experimentalApi=$true}
     }
     Send-CodexRpc @{method='initialized';params=@{}}

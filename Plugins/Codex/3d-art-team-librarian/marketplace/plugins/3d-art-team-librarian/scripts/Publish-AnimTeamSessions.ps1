@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string]$StateDirectory,
     [switch]$RequireCompleteBatch,
     [switch]$IncludeImages,
+    [switch]$VerifyRecordedPublication,
     [string]$BatchDate,
     [string]$ReceiptDirectory
 )

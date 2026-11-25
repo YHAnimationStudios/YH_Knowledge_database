@@ -89,7 +89,7 @@ function Get-AnimTeamTreeEntries([string]$Tree) {
     return $treeListings[$Tree]
 }
 
-function Get-AnimTeamPublishTree([string]$Base, [string]$Folder, [switch]$Images) {
+function Find-AnimTeamDirectory([string]$Base, [string]$Folder) {
     # Check every ancestor before update-index. A file/symlink or a directory
     # at a document path must never be replaced by an upsert.
     $tree = $Base
@@ -103,10 +103,16 @@ function Get-AnimTeamPublishTree([string]$Base, [string]$Folder, [switch]$Images
             }
             $nextTree = $Matches[1]
         }
-        if (-not $nextTree) { return @{} }
+        if (-not $nextTree) { return }
         $tree = $nextTree
     }
+    return $tree
+}
+
+function Get-AnimTeamPublishTree([string]$Base, [string]$Folder, [switch]$Images) {
     $files = @{}
+    $tree = Find-AnimTeamDirectory $Base $Folder
+    if (!$tree) { return $files }
     $pattern = if ($Images) { '[0-9a-f]{64}\.(?:png|jpg|gif|webp)' } else { '[a-f0-9-]{36}\.md' }
     foreach ($entry in (Get-AnimTeamTreeEntries $tree)) {
         if ($entry -imatch "^(\d{6}) [a-z]+ ([0-9a-f]{40,64})\t($pattern)$") {
@@ -116,6 +122,110 @@ function Get-AnimTeamPublishTree([string]$Base, [string]$Folder, [switch]$Images
         }
     }
     return $files
+}
+
+function Stop-AnimTeamLayout([string]$Reason) {
+    $exception = [InvalidOperationException]::new($Reason)
+    $exception.Data['reason'] = $Reason
+    throw $exception
+}
+
+function Assert-AnimTeamLayout([string]$Base) {
+    $rootEntries = @((Get-AnimTeamTreeEntries $Base) | Where-Object { $_ -imatch '\tUsage data\z' })
+    $tree = if ($rootEntries.Count -eq 1 -and $rootEntries[0] -cmatch '^040000 tree ([a-f0-9]{40,64})\tUsage data\z') { $Matches[1] }
+    if ($tree) {
+        $entries = @((Get-AnimTeamTreeEntries $tree) | Where-Object { $_ -imatch '\tlayout\.json\z' })
+        if ($entries.Count -eq 1 -and $entries[0] -cmatch '^100644 blob ([a-f0-9]{40,64})\tlayout\.json\z') {
+            $oid = $Matches[1]
+            if ([long](Invoke-AnimTeamPublishGit @('cat-file','-s',$oid)).Text -le 64 -and
+                (Invoke-AnimTeamPublishGit @('cat-file','blob',$oid)).Text -cmatch '\A\{"version":2\}(?:\r?\n)?\z') { return }
+        }
+    }
+    Stop-AnimTeamLayout 'UsageLayoutNotActive'
+}
+
+function Test-AnimTeamLegacyContents([string]$OldTree,[string]$NewTree) {
+    if (!$NewTree) { return $false }
+    if ($OldTree -ceq $NewTree) { return $true }
+    $owned = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($doc in $documents) { $null=$owned.Add($doc.BaseName) }
+    $raw = (Invoke-AnimTeamPublishGit @('diff-tree','--no-commit-id','--raw','--no-abbrev','--no-renames','-r','-z',$OldTree,$NewTree)).Text
+    $entries = $raw.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)
+    for ($i=0; $i -lt $entries.Count; $i+=2) {
+        $path = $entries[$i+1]
+        if ($path -cmatch '^images/([a-f0-9-]{36})/') {
+            # Any previously stored picture in a frozen session must survive.
+            if ($owned.Contains($Matches[1]) -and !$entries[$i].EndsWith(' A')) { return $false }
+        } elseif ($path -cmatch '^([a-f0-9-]{36})\.md$' -and $owned.Contains($Matches[1]) -and !$entries[$i].EndsWith(' A')) {
+            if ($entries[$i] -cnotmatch '^:100(?:644|755) 100(?:644|755) ([a-f0-9]{40,64}) ([a-f0-9]{40,64}) M$') { return $false }
+            $oldOid=$Matches[1]; $newOid=$Matches[2]
+            if ($oldOid -ceq $newOid) { continue }
+            try {
+                $old = Get-AnimTeamPublishMetadata (Invoke-AnimTeamPublishGit @('cat-file','blob',$oldOid) -HeaderOnly).Text
+                $new = Get-AnimTeamPublishMetadata (Invoke-AnimTeamPublishGit @('cat-file','blob',$newOid) -HeaderOnly).Text
+            } catch { return $false }
+            if ($new.messages -lt $old.messages -or $new.updatedAt -lt $old.updatedAt -or
+                ($new.messages -eq $old.messages -and $new.updatedAt -eq $old.updatedAt)) { return $false }
+        }
+    }
+    return $true
+}
+
+function Assert-AnimTeamMigratedRecord($Record,[string]$Base,[string[]]$History) {
+    $evidence = if ($Record.commit) { $Record.commit } else { $Record.head }
+    if (!$evidence -and !$documents.Count -and !$Record.pushed -and !$Record.pushedImages) { return }
+    if ($evidence -cnotmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z' -or $History -cnotcontains $evidence) {
+        Stop-AnimTeamLayout 'MigrationVerificationRequired'
+    }
+    if ($Record.commit) {
+        $parent = (Invoke-AnimTeamPublishGit @('rev-parse',"${evidence}^")).Text.Trim()
+        if ($Record.base -and $Record.base -cne $parent) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+        $changed = (Invoke-AnimTeamPublishGit @('diff-tree','--no-commit-id','--no-renames','--name-only','-r','-z',$parent,$evidence)).Text
+        $docsChanged = $picsChanged = 0
+        foreach ($name in $changed.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)) {
+            if (!$name.StartsWith($legacyFolder+'/',[StringComparison]::Ordinal)) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+            $relative = $name.Substring($legacyFolder.Length+1)
+            if ($relative -cmatch '^[a-f0-9-]{36}\.md$') { $docsChanged++ }
+            elseif ($relative -cmatch '^images/[a-f0-9-]{36}/[a-f0-9]{64}\.(?:png|jpg|gif|webp)$') { $picsChanged++ }
+            else { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+        }
+        if ($docsChanged -ne $Record.pushed -or $picsChanged -ne [int]$Record.pushedImages) {
+            Stop-AnimTeamLayout 'MigrationVerificationRequired'
+        }
+    }
+    $oldTree = Find-AnimTeamDirectory $evidence $legacyFolder
+    $newTree = Find-AnimTeamDirectory $Base $folder
+    if (!$oldTree -and !$documents.Count) { return }
+    if (!$oldTree) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+    $evidenceDocs = Get-AnimTeamPublishTree $evidence $legacyFolder
+    foreach ($doc in $documents) {
+        if ($evidenceDocs[$doc.Name].Name -cne $doc.Name -or $evidenceDocs[$doc.Name].Mode -notin '100644','100755') {
+            Stop-AnimTeamLayout 'MigrationVerificationRequired'
+        }
+    }
+    if ($oldTree -ceq $newTree) { return }
+    # Later legitimate edits can change either seat tree. Verify the actual copy at
+    # the cutover commit and the evidence commit's ancestry up to the old side.
+    $boundaries = (Invoke-AnimTeamPublishGit @('log','--first-parent','--format=%H','--diff-filter=A',$Base,'--','Usage data/layout.json')).Text
+    foreach ($boundary in $boundaries.Split([char[]]"`r`n",[StringSplitOptions]::RemoveEmptyEntries)) {
+        $parent = Invoke-AnimTeamPublishGit @('rev-parse','--verify',"${boundary}^") -AllowFailure
+        if ($parent.Code) { continue }
+        $before = $parent.Text.Trim()
+        if ((Invoke-AnimTeamPublishGit @('merge-base','--is-ancestor',$evidence,$before) -AllowFailure).Code) { continue }
+        $from = Find-AnimTeamDirectory $before $legacyFolder
+        $to = Find-AnimTeamDirectory $boundary $folder
+        if (!(Test-AnimTeamLegacyContents $oldTree $to)) { continue }
+        if ($from -and $from -ceq $to) { return }
+        if ($from -and $to) {
+            # An exact pre-existing destination file may be coalesced and unrelated
+            # Codex entries retained. Every old relative entry must survive verbatim.
+            $oldFiles = (Invoke-AnimTeamPublishGit @('ls-tree','-r','-z',$from)).Text.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)
+            $newFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($line in (Invoke-AnimTeamPublishGit @('ls-tree','-r','-z',$to)).Text.Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)) { $null=$newFiles.Add($line) }
+            if ($newFiles.IsSupersetOf([string[]]$oldFiles)) { return }
+        }
+    }
+    Stop-AnimTeamLayout 'MigrationVerificationRequired'
 }
 
 function Get-AnimTeamPublishPictures([string]$Text,[string]$Session) {
@@ -182,6 +292,7 @@ function Publish-AnimTeamSessionDocuments {
         [Parameter(Mandatory)][string]$RemoteUrl,
         [switch]$RequireCompleteBatch,
         [switch]$IncludeImages,
+        [switch]$VerifyRecordedPublication,
         [string]$BatchDate,
         [string]$ReceiptDirectory
     )
@@ -200,7 +311,10 @@ function Publish-AnimTeamSessionDocuments {
     if (-not (Test-CodexEmailFolder $Email) -or $Email -cne $Email.ToLowerInvariant()) {
         throw 'Invalid canonical seat email.'
     }
-    $folder = "Animators team/Codex usage data/$Email"
+    $team = 'Animators team'
+    $seatFolder = "Usage data/$team/$Email"
+    $folder = "$seatFolder/Codex"
+    $legacyFolder = "$team/Codex usage data/$Email"
     $rootInfo = Get-Item -LiteralPath $DocumentDirectory -Force
     if ($rootInfo -isnot [IO.DirectoryInfo]) { throw 'Invalid document directory.' }
     for ($ancestor = $rootInfo; $ancestor; $ancestor = $ancestor.Parent) {
@@ -209,6 +323,7 @@ function Publish-AnimTeamSessionDocuments {
     $documentRoot = $rootInfo.FullName
     $documents = @(Get-ChildItem -LiteralPath $documentRoot -File -Force -Filter '*.md' | Sort-Object Name)
     $candidatePath = $null
+    $recorded = $null
     if ($PSBoundParameters.ContainsKey('ReceiptDirectory')) {
         if (!$RequireCompleteBatch -or !$BatchDate -or ![IO.Directory]::Exists($ReceiptDirectory)) { throw 'A dated complete batch requires an existing private receipt directory.' }
         Assert-LibrarianPrivatePath $ReceiptDirectory -Protected
@@ -216,8 +331,16 @@ function Publish-AnimTeamSessionDocuments {
         Assert-LibrarianPrivatePath $candidatePath
         if (!$documents.Count -and [IO.File]::Exists($candidatePath)) { throw 'The pending publication snapshot changed.' }
     }
-    $report = [ordered]@{pushed=0; pushedImages=0; unchanged=0; older=0; conflicts=0; conflictSessions=@(); deferred=0; commit=$null; head=$null; recovered=$false; uncertain=$false}
-    if (-not $documents.Count) { return ($report | ConvertTo-Json -Compress) }
+    if ($VerifyRecordedPublication) {
+        if (!$candidatePath) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+        $recordPath = Join-Path $ReceiptDirectory 'publication.json'
+        Assert-LibrarianPrivatePath $recordPath
+        if ([IO.File]::Exists($recordPath)) {
+            $recorded = Read-LibrarianJson $recordPath
+            if (!$recorded -or $recorded.PSObject.Properties['layoutVersion']) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+        }
+    }
+    $report = [ordered]@{layoutVersion=2; destination=$folder; provisionedTools=0; pushed=0; pushedImages=0; unchanged=0; older=0; conflicts=0; conflictSessions=@(); deferred=0; commit=$null; head=$null; recovered=$false; uncertain=$false}
     $versions = @{}
     $pictures = @{}
     $hasMissing = @{}
@@ -295,7 +418,7 @@ function Publish-AnimTeamSessionDocuments {
             $snapshot = Get-LibrarianKey ($manifest -join "`n")
             if ([IO.File]::Exists($candidatePath)) {
                 $candidate = Read-LibrarianJson $candidatePath
-                if ($candidate.schemaVersion -notin 1,2 -or $candidate.email -cne $Email -or $candidate.batchDate -cne $BatchDate -or
+                if ($candidate.schemaVersion -notin 1,2,3 -or $candidate.email -cne $Email -or $candidate.batchDate -cne $BatchDate -or
                     $candidate.snapshot -cne $snapshot -or $candidate.commit -cnotmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z' -or
                     $candidate.base -cnotmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z') { throw 'Invalid candidate for the pending publication snapshot.' }
                 foreach ($key in 'pushed','unchanged','older') {
@@ -309,22 +432,78 @@ function Publish-AnimTeamSessionDocuments {
                 $imageCount = $candidate.pushedImages
                 $suppliedPictures = @($stagedImages.Values | Where-Object { $_ }).Count
                 if (($imageCount -isnot [long] -and $imageCount -isnot [int]) -or $imageCount -lt 0 -or $imageCount -gt $suppliedPictures) { throw 'Invalid candidate image count.' }
-                if ((!$candidate.pushed -and !$imageCount) -or $candidate.pushed + $candidate.unchanged + $candidate.older -ne $documents.Count) { throw 'Invalid candidate totals.' }
+                if ($candidate.schemaVersion -eq 3) {
+                    $n = $candidate.provisionedTools
+                    if ($candidate.layoutVersion -ne 2 -or $candidate.destination -cne $folder -or
+                        ($n -isnot [long] -and $n -isnot [int]) -or $n -lt 0 -or $n -gt 2) { throw 'Invalid publication layout or provisioning count.' }
+                } elseif ($candidate.PSObject.Properties['layoutVersion'] -or $candidate.PSObject.Properties['destination'] -or $candidate.PSObject.Properties['provisionedTools']) {
+                    throw 'Unexpected layout in legacy candidate.'
+                }
+                if ((!$candidate.pushed -and !$imageCount -and !$candidate.provisionedTools) -or $candidate.pushed + $candidate.unchanged + $candidate.older -ne $documents.Count) { throw 'Invalid candidate totals.' }
             }
         }
         $previousBase = ''
         for ($attempt = 1; $attempt -le 4; $attempt++) {
             # On recovery fetch bounded commit ancestry without downloading old document trees.
-            $fetchLimits = if ($candidate) { @('--depth=256','--filter=tree:0') } else { @('--depth=1','--filter=blob:none') }
+            $fetchLimits = if ($candidate -or $VerifyRecordedPublication) { @('--depth=256','--filter=tree:0') } else { @('--depth=1','--filter=blob:none') }
             $null = Invoke-AnimTeamPublishGit (@('fetch','--quiet') + $fetchLimits + @('--no-tags','origin','refs/heads/main'))
             $base = (Invoke-AnimTeamPublishGit @('rev-parse','--verify','FETCH_HEAD^{commit}')).Text.Trim()
             $report.head = $base
+            $treeListings = @{}
+            Assert-AnimTeamLayout $base
             $accepted = $false
             $parentSeen = $false
-            if ($candidate) {
+            if ($candidate -or $VerifyRecordedPublication) {
                 $history = (Invoke-AnimTeamPublishGit @('rev-list',$base)).Text.Split([char[]]"`r`n",[StringSplitOptions]::RemoveEmptyEntries)
+            }
+            if ($VerifyRecordedPublication) {
+                # This branch only inspects fetched Git objects. It cannot issue a
+                # push, including when the original image opt-in has been revoked.
+                if (!$recorded) {
+                    if ($candidate) {
+                        if ($candidate.schemaVersion -eq 3) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+                        Assert-AnimTeamMigratedRecord $candidate $base $history
+                        foreach ($key in 'pushed','pushedImages','unchanged','older','commit') { $report[$key]=$candidate.$key }
+                        $report.recovered=$true
+                        return ($report | ConvertTo-Json -Compress)
+                    }
+                    $files = Get-AnimTeamPublishTree $base $folder
+                    for ($i=0; $i -lt $documents.Count; $i++) {
+                        $name=$documents[$i].Name
+                        if ($files[$name].Name -cne $name -or $files[$name].Mode -notin '100644','100755' -or $files[$name].Object -cne $hashes[$i].Trim()) {
+                            Stop-AnimTeamLayout 'MigrationVerificationRequired'
+                        }
+                        $session = $documents[$i].BaseName
+                        if (!$pictures[$name].Count) { continue }
+                        $remotePictures=Get-AnimTeamPublishTree $base "$folder/images/$session" -Images
+                        foreach ($path in $pictures[$name]) {
+                            $leaf=$path.Split('/')[-1]
+                            if ($remotePictures[$leaf].Name -cne $leaf -or $remotePictures[$leaf].Mode -cne '100644' -or
+                                (Invoke-AnimTeamPublishGit @('cat-file','blob',$remotePictures[$leaf].Object) -HashOutput).Text -cne $leaf.Split('.')[0]) {
+                                Stop-AnimTeamLayout 'MigrationVerificationRequired'
+                            }
+                        }
+                    }
+                    $report.uncertain=$true
+                    $report.unchanged=$documents.Count
+                    return ($report | ConvertTo-Json -Compress)
+                }
+                if ($candidate -and ($candidate.schemaVersion -eq 3 -or ($recorded.commit -and $recorded.commit -cne $candidate.commit))) {
+                    Stop-AnimTeamLayout 'MigrationVerificationRequired'
+                }
+                Assert-AnimTeamMigratedRecord $recorded $base $history
+                foreach ($key in 'pushed','unchanged','older','conflicts','deferred','commit','uncertain') { $report[$key] = $recorded.$key }
+                $report.pushedImages = [int]$recorded.pushedImages
+                $report.recovered = [bool]$recorded.commit
+                return ($report | ConvertTo-Json -Compress)
+            }
+            if ($candidate) {
                 $accepted = $history -ccontains $candidate.commit
                 $parentSeen = $history -ccontains $candidate.base
+                if ($candidate.schemaVersion -lt 3) {
+                    if ($accepted) { Assert-AnimTeamMigratedRecord $candidate $base $history }
+                    elseif (!$parentSeen) { Stop-AnimTeamLayout 'MigrationVerificationRequired' }
+                }
             }
             # A rejected push with the same server tip is a permissions, policy or
             # transport failure. Retrying an identical commit cannot reconcile it.
@@ -334,7 +513,6 @@ function Publish-AnimTeamSessionDocuments {
             $changes = [Text.StringBuilder]::new()
             $conflicts = [Collections.Generic.List[string]]::new()
             $confirm = @{}
-            $treeListings = @{}
             $files = Get-AnimTeamPublishTree $base $folder
             $requiredPictures = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             $changedCount = 0
@@ -441,13 +619,23 @@ function Publish-AnimTeamSessionDocuments {
                     } else { throw 'Missing session image content.' }
                 }
             }
+            $provisioned = 0
+            if (!$accepted -and $documents.Count -and ($changedCount -or $changedImages -or $files.Count) -and !$conflicts.Count) {
+                foreach ($tool in 'Claude','Opencode') {
+                    if (Find-AnimTeamDirectory $base "$seatFolder/$tool") { continue }
+                    $emptyBlob = (Invoke-AnimTeamPublishGit @('hash-object','-w','--stdin')).Text.Trim()
+                    $null = $changes.Append("100644 $emptyBlob`t$seatFolder/$tool/.gitkeep`n")
+                    $provisioned++
+                }
+            }
             if ($accepted) {
                 foreach ($key in 'pushed','pushedImages','unchanged','older','commit') { $report[$key] = $candidate.$key }
+                $report.provisionedTools = [int]$candidate.provisionedTools
                 $report.recovered = $true
-            } elseif ($candidate -and !$changedCount -and !$changedImages) {
+            } elseif ($candidate -and !$changedCount -and !$changedImages -and !$provisioned) {
                 $report.uncertain = $true
             }
-            if ($changedCount -or $changedImages) {
+            if ($changedCount -or $changedImages -or $provisioned) {
                 if ($candidate -and !$parentSeen) { throw 'Cannot establish the outcome of the previous evening push from available repository history.' }
                 $null = Invoke-AnimTeamPublishGit @('read-tree',$base)
                 $null = Invoke-AnimTeamPublishGit @('update-index','--index-info') -InputText $changes.ToString()
@@ -455,7 +643,8 @@ function Publish-AnimTeamSessionDocuments {
                 $commit = (Invoke-AnimTeamPublishGit @('-c','user.name=Anim Team Librarian','-c',"user.email=$Email",'-c','commit.gpgSign=false','commit-tree',$tree,'-p',$base,'-m',$subject)).Text.Trim()
                 if ((Get-LibrarianRepositoryHttpStatus) -ne 404) { throw 'Repository visibility could not be verified. Publication stopped.' }
                 if ($candidatePath) {
-                    $candidate = @{schemaVersion=2; email=$Email; batchDate=$BatchDate; snapshot=$snapshot; base=$base; commit=$commit
+                    $candidate = @{schemaVersion=3; layoutVersion=2; destination=$folder; provisionedTools=$provisioned
+                        email=$Email; batchDate=$BatchDate; snapshot=$snapshot; base=$base; commit=$commit
                         pushed=$changedCount; pushedImages=$changedImages; unchanged=$report.unchanged; older=$report.older}
                     Write-LibrarianJson $candidatePath $candidate -Replace
                 }
@@ -463,6 +652,7 @@ function Publish-AnimTeamSessionDocuments {
                 if ($push.Code) { $previousBase = $base; continue }
                 $report.pushed = $changedCount
                 $report.pushedImages = $changedImages
+                $report.provisionedTools = $provisioned
                 $report.commit = $commit
                 $report.head = $commit
             }
