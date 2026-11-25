@@ -1,7 +1,9 @@
 # Codex usage data
 
-Anim Team Librarian saves each enrolled animator’s Codex sessions in a folder named for their signed-in team email. Each Markdown filename is the session ID. Continuing a chat updates its existing document. Anyone with read access to this repository can read these documents.
+Anim Team Librarian saves an animator’s Codex chats in a folder named for their signed-in seat email. Each Markdown filename is a session ID. Repository readers can read these documents.
 
-## Enroll a workstation
+At **10:00 PM local time**, each enrolled workstation checks its saved active and archived chats and commits all changed documents together. A missed evening is retried after sign-in or at the next half-hour check. An unchanged evening gets a local completion receipt.
 
-Download and extract [Anim Team Librarian 0.2.0](../anim-team-librarian-0.2.0.zip). Follow the setup instructions in `plugins/anim-team-librarian/README.md`. Enrollment uploads the active and archived chats visible to your signed-in Codex account on that workstation, across all projects. The plugin creates your folder on its first successful sync.
+## Enroll or upgrade a workstation
+
+Download [Anim Team Librarian 0.3.0](../anim-team-librarian-0.3.0.zip) and follow `plugins/anim-team-librarian/README.md` inside the package. Existing 0.2.0 installations must also rerun enrollment to register their evening task. To see whether the latest evening completed, run `Configure-AnimLibrarian.ps1 -Status` from the installed plugin scripts.
