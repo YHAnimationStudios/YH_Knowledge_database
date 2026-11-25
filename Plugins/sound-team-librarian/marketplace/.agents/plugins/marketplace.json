@@ -1,0 +1,20 @@
+{
+  "name": "sound-team-tools",
+  "interface": {
+    "displayName": "Sound Team Tools"
+  },
+  "plugins": [
+    {
+      "name": "sound-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./plugins/sound-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

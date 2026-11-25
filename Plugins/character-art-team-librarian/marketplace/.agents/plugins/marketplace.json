@@ -1,0 +1,20 @@
+{
+  "name": "character-art-team-tools",
+  "interface": {
+    "displayName": "Character Art Team Tools"
+  },
+  "plugins": [
+    {
+      "name": "character-art-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./plugins/character-art-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
