@@ -186,6 +186,22 @@ Describe 'Install-LibrarianAppCopy' {
         Get-Content (Join-Path $stateRoot 'app\0.1.1\Other.ps1') -Raw | Should -Match 'changed'
     }
 
+    It 'unblocks copied scripts that came from a downloaded zip' {
+        $source = Join-Path $script:Root 'zone-src'
+        New-Item -ItemType Directory -Path $source -Force | Out-Null
+        foreach ($n in 'Sync-AnimTeamSessions.ps1', 'Other.ps1') { Set-Content (Join-Path $source $n) "# $n" }
+        Set-Content -LiteralPath (Join-Path $source 'Other.ps1') -Stream 'Zone.Identifier' -Value "[ZoneTransfer]`r`nZoneId=3"
+        @(Get-Item -LiteralPath (Join-Path $source 'Other.ps1') -Stream * | Where-Object Stream -eq 'Zone.Identifier').Count | Should -Be 1
+        $stateRoot = Join-Path $script:Root 'zone-root'
+        New-Item -ItemType Directory -Path $stateRoot | Out-Null
+        # Sync-AnimTeamSessions.ps1 has no Zone.Identifier stream; unblocking it must not throw.
+        $entry = Install-LibrarianAppCopy $source $stateRoot '0.1.0'
+        Test-Path $entry | Should -BeTrue
+        foreach ($n in 'Sync-AnimTeamSessions.ps1', 'Other.ps1') {
+            @(Get-Item -LiteralPath (Join-Path $stateRoot "app\0.1.0\$n") -Stream * | Where-Object Stream -eq 'Zone.Identifier').Count | Should -Be 0
+        }
+    }
+
     It 'rejects a version that could escape the app folder' {
         { Install-LibrarianAppCopy (Join-Path $script:Root 'app-src') (Join-Path $script:Root 'app-root') '..\x' } | Should -Throw
     }

@@ -4,6 +4,38 @@
 $script:TranscriptKeepTypes = @('user', 'assistant', 'custom-title', 'ai-title', 'summary')
 $script:TranscriptHasDateKind = (Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')
 
+$script:TranscriptContextPattern = '(?s)<(system-reminder|ide_opened_file|ide_selection|ide_diagnostics|task-notification|user-prompt-submit-hook)>.*?(?:</\1>|\z)'
+$script:TranscriptCommandPattern = '(?s)<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr)>.*?(?:</\1>|\z)'
+$script:TranscriptRecordFields = @('uuid', 'parentUuid', 'logicalParentUuid', 'type', 'timestamp',
+    'isMeta', 'isCompactSummary', 'isSidechain', 'isApiErrorMessage')
+
+function ConvertTo-ClaudeSlimRecord([hashtable] $Record) {
+    # Keep only what the branch walk, titles and message conversion read, so tool results, tool
+    # inputs and thinking are released as soon as each line is parsed.
+    $slim = @{}
+    foreach ($field in $script:TranscriptRecordFields) {
+        if ($Record.ContainsKey($field)) { $slim[$field] = $Record[$field] }
+    }
+    $message = $Record['message']
+    if ($message -is [hashtable]) {
+        $slimMessage = @{}
+        if ($message.ContainsKey('id')) { $slimMessage['id'] = $message['id'] }
+        if ($message.ContainsKey('role')) { $slimMessage['role'] = $message['role'] }
+        $content = $message['content']
+        if ($content -is [string]) {
+            $slimMessage['content'] = $content
+        } elseif ($content -is [System.Collections.IEnumerable]) {
+            $blocks = [Collections.Generic.List[object]]::new()
+            foreach ($block in $content) {
+                if ($block -is [hashtable] -and ($block['type'] -ceq 'text' -or $block['type'] -ceq 'image')) { $blocks.Add($block) }
+            }
+            $slimMessage['content'] = $blocks.ToArray()
+        }
+        $slim['message'] = $slimMessage
+    }
+    return $slim
+}
+
 function Read-ClaudeTranscriptRecords([string] $Path) {
     # Open/read failures must throw whatever the caller's ErrorActionPreference is.
     $ErrorActionPreference = 'Stop'
@@ -39,6 +71,7 @@ function Read-ClaudeTranscriptRecords([string] $Path) {
                     }
                     continue
                 }
+                if ($type -ceq 'user' -or $type -ceq 'assistant') { $record = ConvertTo-ClaudeSlimRecord $record }
                 $records.Add($record)
             }
         } finally { $reader.Dispose() }
@@ -134,15 +167,17 @@ function Get-ClaudeUserParts($Content) {
         }
     }
     $raw = $textBlocks -join "`n"
-    # An unclosed <system-reminder> runs to the end of the text.
-    $text = [regex]::Replace($raw, '(?s)<system-reminder>.*?(?:</system-reminder>|\z)', '')
+    # Injected context (reminders, IDE file/selection/diagnostics, background-task notifications,
+    # hook text) is removed first: it never counts as the user's words. Every wrapper below
+    # that is left unclosed runs to the end of the text.
+    $text = [regex]::Replace($raw, $script:TranscriptContextPattern, '')
 
-    if ($text -match '<command-name>\s*(/[^<\s]+)\s*</command-name>') {
-        $parts.Add(@{ type = 'command'; name = $Matches[1] })
+    if ($text -match '<command-name>\s*/?([^<\s/][^<\s]*)\s*</command-name>') {
+        $parts.Add(@{ type = 'command'; name = '/' + $Matches[1] })
         return , $parts
     }
     $hadText = [bool]$text.Trim()
-    $text = [regex]::Replace($text, '(?s)<(command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr)>.*?</\1>', '')
+    $text = [regex]::Replace($text, $script:TranscriptCommandPattern, '')
     # Nothing but command or shell output was left: drop the record (images included).
     if ($hadText -and -not $text.Trim()) { return , $parts }
     if ($text.Length -ne $raw.Length) { $text = $text.Trim() }

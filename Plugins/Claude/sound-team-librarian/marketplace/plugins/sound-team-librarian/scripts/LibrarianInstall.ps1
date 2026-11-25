@@ -64,11 +64,15 @@ function Install-LibrarianAppCopy([string] $SourceScripts, [string] $StateRoot, 
     $target = Join-Path $app $Version
     New-LibrarianPrivateDirectory $app
     New-LibrarianPrivateDirectory $target
+    $unblock = [bool](Get-Command Unblock-File -ErrorAction SilentlyContinue)
     foreach ($file in [IO.Directory]::GetFiles($SourceScripts, '*.ps1')) {
         $destination = Join-Path $target ([IO.Path]::GetFileName($file))
         $stage = $destination + ".$([guid]::NewGuid().ToString('N')).tmp"
         try {
             [IO.File]::Copy($file, $stage, $true)
+            # Scripts extracted from a downloaded zip carry Zone.Identifier; the scheduled task runs
+            # under the default execution policy, which refuses blocked scripts.
+            if ($unblock) { try { Unblock-File -LiteralPath $stage -ErrorAction Stop } catch { } }
             [IO.File]::Move($stage, $destination, $true)
         } finally {
             if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }

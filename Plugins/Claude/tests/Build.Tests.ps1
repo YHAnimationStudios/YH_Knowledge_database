@@ -83,6 +83,17 @@ Describe 'Build-ClaudeLibrarians' {
         }
     }
 
+    It 'tells Claude to run every bundled script with PowerShell 7' {
+        $out = Join-Path $TestDrive 'skill'
+        & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
+        $skill = [IO.File]::ReadAllText((Join-Path $out 'anim-team-librarian/marketplace/plugins/anim-team-librarian/skills/anim-team-librarian/SKILL.md'))
+        $skill | Should -Match ([regex]::Escape('pwsh -NoProfile -File "${CLAUDE_PLUGIN_ROOT}/scripts/'))
+        # Every script reference is a pwsh -File invocation, never a bare path Windows PowerShell 5.1 could pick up.
+        $refs = [regex]::Matches($skill, '`[^`]*\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[^`]*`')
+        $refs.Count | Should -BeGreaterThan 0
+        foreach ($ref in $refs) { $ref.Value | Should -Match '^`pwsh -NoProfile -File "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[A-Za-z-]+\.ps1"' }
+    }
+
     It 'links the team README to the team usage folder' {
         $out = Join-Path $TestDrive 'link'
         & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null

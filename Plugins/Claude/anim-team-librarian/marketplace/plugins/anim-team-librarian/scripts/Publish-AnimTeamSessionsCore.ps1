@@ -152,27 +152,6 @@ function Get-AnimTeamPublishPictures([string]$Text,[string]$Session) {
     }
 }
 
-function Restore-AnimTeamPublishPictures([string]$Local,[string]$Existing,[string]$Session,[hashtable]$Stored) {
-    # A missing source on this machine can use the same visible item's previously archived link.
-    # Scope by session, stable item marker and role. Removed or moderated slots cannot reappear.
-    $marker = '(?m)^<!-- anim-team-image ([0-9a-f]{64}) -->\r?\n'
-    $archived = @{}
-    foreach ($match in [regex]::Matches($Existing, $marker + '(!\[(Image attachment)\]\(images/([0-9a-f-]{36})/([0-9a-f]{64}\.(?:png|jpg|gif|webp))\))(?=\r?$)')) {
-        if ($match.Groups[4].Value -cne $Session) { throw 'Invalid archived session image reference.' }
-        $leaf = $match.Groups[5].Value
-        if ($null -ne $Stored -and !$Stored.ContainsKey($leaf) -and !$stagedImages.ContainsKey("images/$Session/$leaf")) { continue }
-        $key = $match.Groups[1].Value + $match.Groups[3].Value
-        if ($archived.ContainsKey($key)) { throw 'Ambiguous archived image marker.' }
-        $archived[$key] = $match.Groups[2].Value
-    }
-    return [regex]::Replace($Local, $marker + '(\*(Attached|Generated) image unavailable\.\*)(?=\r?$)', {
-        param($match)
-        $link = $archived[$match.Groups[1].Value + $match.Groups[3].Value]
-        if ($link) { return $match.Value.Substring(0,$match.Value.Length - $match.Groups[2].Length) + $link }
-        return $match.Value
-    })
-}
-
 function Read-AnimTeamStagedImage([string]$Relative) {
     $path = $documentRoot
     foreach ($part in $Relative.Split('/')) {
@@ -246,7 +225,6 @@ function Publish-AnimTeamSessionDocuments {
     $report = [ordered]@{layoutVersion=2; destination=$folder; provisionedTools=0; pushed=0; pushedImages=0; unchanged=0; older=0; conflicts=0; conflictSessions=@(); deferred=0; commit=$null; head=$null; recovered=$false; uncertain=$false}
     $versions = @{}
     $pictures = @{}
-    $hasMissing = @{}
     $stagedImages = @{}
     foreach ($doc in $documents) {
         if ($doc.Name -cnotmatch '\A[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.md\z' -or ($doc.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
@@ -302,7 +280,6 @@ function Publish-AnimTeamSessionDocuments {
                     $pictures[$doc.Name] = @(Get-AnimTeamPublishPictures $body $doc.BaseName)
                     if ($pictures[$doc.Name].Count -and !$IncludeImages) { throw 'Session picture publication requires enrollment consent.' }
                     foreach ($rel in $pictures[$doc.Name]) { $stagedImages[$rel] = $null }
-                    $hasMissing[$doc.Name] = $IncludeImages -and $body.Contains(' image unavailable.*')
                 }
                 $oids = (Invoke-AnimTeamPublishGit @('hash-object','--no-filters','-w','--stdin-paths') -InputText (($chunk.Name -join "`n") + "`n")).Text.TrimEnd().Split("`n")
                 if ($oids.Count -ne $chunk.Count) { throw 'Git returned an incomplete document hash list.' }
@@ -383,39 +360,18 @@ function Publish-AnimTeamSessionDocuments {
                         $line = (Invoke-AnimTeamPublishGit @('cat-file','blob',$existing.Object) -HeaderOnly).Text
                         $old = Get-AnimTeamPublishMetadata $line
                         $new = $versions[$name]
-                        $onlyMissingFiles = $false
-                        if ($new.updatedAt -lt $old.updatedAt -or $new.messages -lt $old.messages) { $report.older++; continue }
-                        if ($hasMissing[$name]) {
-                            $localText = (Invoke-AnimTeamPublishGit @('cat-file','blob',$oid)).Text
-                            $remoteText = (Invoke-AnimTeamPublishGit @('cat-file','blob',$existing.Object)).Text
-                            $id = $documents[$i].BaseName
-                            $withAllLinks = Restore-AnimTeamPublishPictures $localText $remoteText $id
-                            if ($withAllLinks -cne $localText) {
-                                $stored = Get-AnimTeamPublishTree $base "$folder/images/$id" -Images
-                                $merged = Restore-AnimTeamPublishPictures $localText $remoteText $id $stored
-                                $onlyMissingFiles = $withAllLinks -ceq $remoteText -and $merged -cne $withAllLinks
-                                if ($merged -cne $localText) {
-                                    $oid = (Invoke-AnimTeamPublishGit @('hash-object','--no-filters','-w','--stdin') -InputText $merged).Text.Trim()
-                                    $docPictures = @(Get-AnimTeamPublishPictures $merged $id)
-                                }
-                            }
+                        # Claude documents export only the active branch, so a rewind can shrink the
+                        # message count. Order by updatedAt; the message count only breaks ties.
+                        if ($new.updatedAt -lt $old.updatedAt -or ($new.updatedAt -eq $old.updatedAt -and $new.messages -lt $old.messages)) {
+                            $report.older++
+                            continue
                         }
-                        if ($oid -cne $existing.Object -and $new.updatedAt -eq $old.updatedAt -and $new.messages -eq $old.messages) {
+                        if ($new.updatedAt -eq $old.updatedAt -and $new.messages -eq $old.messages) {
                             # Tied independent edits still require a common base.
                             if ($known[$name] -ceq $oid) { $report.older++; continue }
                             if ($known[$name] -cne $existing.Object) {
-                                $pureBackfill = $onlyMissingFiles
-                                if (!$pureBackfill -and $IncludeImages -and $docPictures.Count) {
-                                    # Two devices may have different access to the same visible image.
-                                    # Verify that filling matching empty slots accounts for the entire diff.
-                                    $remoteText = (Invoke-AnimTeamPublishGit @('cat-file','blob',$existing.Object)).Text
-                                    $localText = (Invoke-AnimTeamPublishGit @('cat-file','blob',$oid)).Text
-                                    $pureBackfill = (Restore-AnimTeamPublishPictures $remoteText $localText $documents[$i].BaseName) -ceq $localText
-                                }
-                                if (!$pureBackfill) {
-                                    $conflicts.Add($documents[$i].BaseName)
-                                    continue
-                                }
+                                $conflicts.Add($documents[$i].BaseName)
+                                continue
                             }
                         }
                     }

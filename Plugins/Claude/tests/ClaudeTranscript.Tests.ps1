@@ -132,6 +132,28 @@ Describe 'ClaudeTranscript' {
         ($flat -join '|') | Should -Not -Match 'CMDOUT|LEAK|reminder'
     }
 
+    It 'strips IDE context, task notifications and hook text, closed or unclosed' {
+        $flat = Get-Flat (Get-Messages 'context.jsonl')
+        $flat | Should -Be @('User:please fix', 'User:why does it fail', 'User:run', 'User:thanks next', 'Assistant:fine')
+        (ConvertTo-Json (Get-Messages 'context.jsonl') -Depth 8) | Should -Not -Match 'LEAK|SECRET|secret\.ps1|ide_|task-notification|hook'
+    }
+
+    It 'renders a command name without a leading slash as a slash command' {
+        $path = Join-Path (Get-TestDriveRoot) 'noslash.jsonl'
+        $lines = @(
+            '{"type":"user","uuid":"c1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"<command-name>compact</command-name><command-message>compact</command-message>"}}'
+            '{"type":"user","uuid":"c2","parentUuid":"c1","timestamp":"2026-11-25T10:00:01.000Z","message":{"role":"user","content":"<command-name>/model</command-name>"}}'
+        )
+        [IO.File]::WriteAllLines($path, $lines)
+        $read = Read-ClaudeTranscriptRecords $path
+        $m = ConvertTo-ClaudeMessages (Select-ClaudeActiveBranch $read.records)
+        $m.Count | Should -Be 2
+        $m[0].parts.Count | Should -Be 1
+        $m[0].parts[0].type | Should -BeExactly 'command'
+        $m[0].parts[0].name | Should -BeExactly '/compact'
+        $m[1].parts[0].name | Should -BeExactly '/model'
+    }
+
     It 'does not export a replaced duplicate uuid twice in the fallback' {
         $path = Join-Path (Get-TestDriveRoot) 'dup.jsonl'
         $lines = @(
@@ -170,5 +192,52 @@ Describe 'ClaudeTranscript' {
         $messages.Count | Should -Be 60000
         $sw.Elapsed.TotalSeconds | Should -BeLessThan 60
         $growthMb | Should -BeLessThan 200
+    }
+
+    It 'keeps memory flat on a tool-heavy transcript and retains no tool payloads' {
+        $path = Join-Path (Get-TestDriveRoot) 'tools-big.jsonl'
+        $payload = 'TOOLRESULT-' + ('x' * 100000)
+        $writer = [IO.StreamWriter]::new($path, $false, [Text.UTF8Encoding]::new($false))
+        try {
+            $prev = 'null'
+            $n = 0
+            for ($i = 1; $i -le 2000; $i++) {
+                $records = @(
+                    ,@('user', ('{"role":"user","content":"question ' + $i + '"}'))
+                    ,@('assistant', ('{"id":"t' + $i + '","role":"assistant","content":[{"type":"thinking","thinking":"THINKING-SECRET"},{"type":"tool_use","id":"tu' + $i + '","name":"Read","input":{"file_path":"C:\\x\\TOOLUSE-SECRET.txt"}}]}'))
+                    ,@('user', ('{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu' + $i + '","content":"' + $payload + '"}]}'))
+                    ,@('assistant', ('{"id":"a' + $i + '","role":"assistant","content":[{"type":"text","text":"answer ' + $i + '"}]}'))
+                )
+                foreach ($r in $records) {
+                    $n++
+                    $writer.WriteLine('{"type":"' + $r[0] + '","uuid":"r' + $n + '","parentUuid":' + $prev + ',"timestamp":"2026-11-25T10:00:00.000Z","toolUseResult":{"stdout":"' + $(if ($r[1].Contains('tool_result')) { $payload } else { '' }) + '"},"message":' + $r[1] + '}')
+                    $prev = '"r' + $n + '"'
+                }
+            }
+        } finally { $writer.Dispose() }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+        [GC]::Collect()
+        $before = [Diagnostics.Process]::GetCurrentProcess().WorkingSet64
+        $read = Read-ClaudeTranscriptRecords $path
+        $branch = Select-ClaudeActiveBranch $read.records
+        $messages = ConvertTo-ClaudeMessages $branch
+        $growthMb = ([Diagnostics.Process]::GetCurrentProcess().WorkingSet64 - $before) / 1MB
+        $messages.Count | Should -Be 4000
+        $messages[1].parts[0].text | Should -BeExactly 'answer 1'
+        $growthMb | Should -BeLessThan 200
+        $retained = [Collections.Generic.List[string]]::new()
+        foreach ($record in $read.records) {
+            if ($record.ContainsKey('toolUseResult')) { $retained.Add("$($record['uuid']):toolUseResult") }
+            $content = if ($record['message'] -is [hashtable]) { $record['message']['content'] }
+            if ($content -is [string]) {
+                if ($content -match 'TOOLRESULT|SECRET') { $retained.Add("$($record['uuid']):string") }
+                continue
+            }
+            foreach ($block in @($content)) {
+                if ($null -ne $block -and $block['type'] -notin 'text', 'image') { $retained.Add("$($record['uuid']):$($block['type'])") }
+            }
+        }
+        $retained.Count | Should -Be 0
     }
 }

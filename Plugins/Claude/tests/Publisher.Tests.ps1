@@ -103,6 +103,52 @@ Describe 'Publish-AnimTeamSessionDocuments' {
         (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
     }
 
+    It 'publishes a rewound session with fewer messages but a later updatedAt' {
+        $remote = New-Remote
+        $docs = New-Documents
+        $state = New-State
+        $id = $docs.Ids[0]
+        $path = Join-Path $docs.Dir "$id.md"
+        [IO.File]::WriteAllText($path, "<!-- anim-team-librarian {`"schema`":1,`"updatedAt`":1000,`"messages`":6} -->`n# Session`n`nSession ID: $id`n`nsix messages`n")
+        (Invoke-Publish $remote $docs $state).pushed | Should -Be 1
+        $rewound = "<!-- anim-team-librarian {`"schema`":1,`"updatedAt`":2000,`"messages`":4} -->`n# Session`n`nSession ID: $id`n`nfour messages after rewind`n"
+        [IO.File]::WriteAllText($path, $rewound)
+        $r = Invoke-Publish $remote $docs $state
+        $r.pushed | Should -Be 1
+        $r.older | Should -Be 0
+        (Invoke-TestGit $remote.Bare @('show', "main:$($script:Seat)/Claude/$id.md")) -join "`n" | Should -BeExactly $rewound.TrimEnd("`n")
+    }
+
+    It 'keeps the remote document when the local copy has an earlier updatedAt, whatever its message count' {
+        $remote = New-Remote
+        $docs = New-Documents
+        $state = New-State
+        $id = $docs.Ids[0]
+        $path = Join-Path $docs.Dir "$id.md"
+        (Invoke-Publish $remote $docs $state).pushed | Should -Be 1
+        $head = Invoke-TestGit $remote.Bare @('rev-parse', 'main')
+        [IO.File]::WriteAllText($path, "<!-- anim-team-librarian {`"schema`":1,`"updatedAt`":500,`"messages`":8} -->`n# Session`n`nSession ID: $id`n`nstale copy`n")
+        $r = Invoke-Publish $remote $docs $state
+        $r.pushed | Should -Be 0
+        $r.older | Should -Be 1
+        (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
+    }
+
+    It 'reports a conflict for a tied but different document without a common base' {
+        $remote = New-Remote
+        $docs = New-Documents
+        $id = $docs.Ids[0]
+        $path = Join-Path $docs.Dir "$id.md"
+        (Invoke-Publish $remote $docs (New-State)).pushed | Should -Be 1
+        $head = Invoke-TestGit $remote.Bare @('rev-parse', 'main')
+        [IO.File]::AppendAllText($path, "edited elsewhere`n")
+        $r = Invoke-Publish $remote $docs (New-State)
+        $r.pushed | Should -Be 0
+        $r.conflicts | Should -Be 1
+        $r.conflictSessions | Should -Be @($id)
+        (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
+    }
+
     It 'rebases onto a concurrent commit and pushes' {
         $remote = New-Remote
         $docs = New-Documents
