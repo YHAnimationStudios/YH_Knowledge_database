@@ -25,17 +25,18 @@ function Read-ClaudeIdentity([string] $ConfigPath) {
                 $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false, $true))
                 try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
             } finally { $stream.Dispose() }
-            $config = $text | ConvertFrom-Json -ErrorAction Stop
+            # -AsHashtable: Claude Code on Windows can store the same project path under keys that differ only by case.
+            $config = $text | ConvertFrom-Json -AsHashtable -ErrorAction Stop
             break
         } catch [IO.IOException], [ArgumentException], [Text.DecoderFallbackException], [InvalidOperationException] {
             if ($attempt -eq 3) { throw }
             Start-Sleep -Milliseconds 500
         }
     }
-    $account = if ($config) { $config.oauthAccount } else { $null }
-    if ($null -eq $account) { throw [UnauthorizedAccessException]::new('A signed-in Claude account is required.') }
-    $email = ([string]$account.emailAddress).ToLowerInvariant()
-    $userId = [string]$account.accountUuid
+    $account = if ($config -is [Collections.IDictionary]) { $config['oauthAccount'] } else { $null }
+    if ($account -isnot [Collections.IDictionary]) { throw [UnauthorizedAccessException]::new('A signed-in Claude account is required.') }
+    $email = ([string]$account['emailAddress']).ToLowerInvariant()
+    $userId = [string]$account['accountUuid']
     if (-not (Test-SeatEmailFolder $email)) {
         throw [UnauthorizedAccessException]::new('The Claude account email is not usable.')
     }
