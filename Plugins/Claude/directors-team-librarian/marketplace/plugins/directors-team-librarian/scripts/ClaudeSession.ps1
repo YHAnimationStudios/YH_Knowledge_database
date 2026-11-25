@@ -1,7 +1,7 @@
 function Test-SeatEmailFolder($Email) {
     $address = $null
     return $Email -is [string] -and $Email.Length -le 254 -and
-        $Email -notmatch '[\x00-\x20<>:"/\|?*\x7f]|[.]$' -and
+        $Email -notmatch '[\x00-\x20<>:"/\\|?*\x7f]|[.]$' -and
         $Email -notmatch '^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])\.' -and
         [Net.Mail.MailAddress]::TryCreate($Email,[ref]$address) -and $Email -ceq $address.Address
 }

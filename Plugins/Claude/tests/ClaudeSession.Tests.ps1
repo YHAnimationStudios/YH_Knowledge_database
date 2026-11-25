@@ -63,3 +63,23 @@ Describe 'ClaudeSession' {
         (Get-ClaudePaths '').Config | Should -Be (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.claude.json')
     }
 }
+
+Describe 'Test-SeatEmailFolder' {
+    BeforeAll {
+        $script:Scripts = New-LibrarianTestPlugin 'anim'
+        . (Join-Path $script:Scripts 'ClaudeSession.ps1')
+    }
+
+    It 'accepts a valid lower-case address' {
+        Test-SeatEmailFolder 'seat.one@studio.org' | Should -BeTrue
+    }
+
+    It 'rejects <Email>' -ForEach @(
+        @{ Email = 'a\b@x.org' }
+        @{ Email = 'a/b@x.org' }
+        @{ Email = 'CON.x@x.org' }
+        @{ Email = 'a@x.org.' }
+    ) {
+        Test-SeatEmailFolder $Email | Should -BeFalse
+    }
+}
