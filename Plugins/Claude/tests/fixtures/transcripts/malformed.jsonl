@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"one"}}
+this line is not json {{{
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-11-25T10:00:01.000Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"two"}]}}
+{"type":"user","uuid":"u2","parentUuid":"a1","timestamp":"2026-11-25T10:00:02.000Z","message":{"role":"user","content":"three"}}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","timestamp":"2026-11-25T10:00:03.000Z","message":{"id":"m2","role":"assistant","content":[{"type":"te

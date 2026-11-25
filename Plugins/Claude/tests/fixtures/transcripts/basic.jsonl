@@ -1,0 +1,2 @@
+{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"s","timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"hello there"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"s","timestamp":"2026-11-25T10:00:05.000Z","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Hi! How can I help?"}]}}

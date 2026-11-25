@@ -1,0 +1,4 @@
+{"type":"ai-title","aiTitle":"Early AI title","sessionId":"s"}
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"hi"}}
+{"type":"custom-title","customTitle":"My custom title","sessionId":"s"}
+{"type":"ai-title","aiTitle":"Late AI title","sessionId":"s"}
