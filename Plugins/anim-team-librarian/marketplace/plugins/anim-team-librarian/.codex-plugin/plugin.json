@@ -1,0 +1,13 @@
+{
+  "name": "anim-team-librarian",
+  "version": "0.4.0",
+  "description": "Back up an enrolled seat’s saved Codex chats and optional session pictures to team GitHub every evening.",
+  "interface": {
+    "displayName": "Anim Team Librarian",
+    "shortDescription": "Evening Codex chat backup",
+    "longDescription": "At 22:00 local time, commit saved chats and optional pictures under the seat email. Each picture folder identifies its chat. Missed evenings catch up at the next check.",
+    "category": "Productivity"
+  },
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}
