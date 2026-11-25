@@ -138,7 +138,9 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
         layoutVersion=2;destination=$destination;provisionedTools=$null
         skipped=0;failures=0;malformedLines=0;changed=$null;unchanged=0;older=0;conflicts=0;commit=$null;head=$null;outcome=$null}
     try {
-        if (-not (Test-LibrarianBinding $Config (Get-LibrarianIdentity))) { $attempt.reason='AccountChanged'; throw 'Hold' }
+        # Signed out or switched accounts both mean the enrolled account is no longer signed in.
+        $identity = try { Get-LibrarianIdentity } catch { $null }
+        if (-not (Test-LibrarianBinding $Config $identity)) { $attempt.reason='AccountChanged'; throw 'Hold' }
         $attempt.reason = 'DestinationVisibilityUnverified'
         if ((Get-LibrarianRepositoryHttpStatus) -ne 404) { throw 'Hold' }
         $attempt.reason = 'CollectionFailed'
@@ -176,7 +178,14 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
             New-LibrarianPrivateDirectory $docs
             $collectArgs = @{OutputDirectory=$docs;ExpectedEmail=$Config.email;PinnedUserId=$Config.userId}
             if ($includeImages) { $collectArgs.IncludeImages = $true }
-            $collection = & (Join-Path $PSScriptRoot 'Collect-ClaudeTeamHistory.ps1') @collectArgs 2>$null | ConvertFrom-Json
+            try {
+                $collection = & (Join-Path $PSScriptRoot 'Collect-ClaudeTeamHistory.ps1') @collectArgs 2>$null | ConvertFrom-Json
+            } catch {
+                # The collector also throws for non-identity failures; decide by re-checking the account.
+                $recheck = try { Get-LibrarianIdentity } catch { $null }
+                if (-not (Test-LibrarianBinding $Config $recheck)) { $attempt.reason='AccountChanged'; throw 'Hold' }
+                throw
+            }
             if (-not (Test-LibrarianBinding $Config $collection)) { $attempt.reason='AccountChanged'; throw 'Hold' }
         } else {
             $docs = Join-Path $frozen 'documents'
@@ -202,7 +211,8 @@ function Invoke-LibrarianEvening($Config,[string]$Directory,[string]$Seat,$Statu
                 $active.eveningTime -cne $Config.eveningTime -or $active.firstEveningDate -cne $Config.firstEveningDate -or
                 -not (Test-LibrarianBinding $Config $active)) { $attempt.reason='EnrollmentChanged'; throw 'Hold' }
             $attempt.reason = 'AccountVerificationFailed'
-            if (-not (Test-LibrarianBinding $Config (Get-LibrarianIdentity))) { $attempt.reason='AccountChanged'; throw 'Hold' }
+            $identity = try { Get-LibrarianIdentity } catch { $null }
+            if (-not (Test-LibrarianBinding $Config $identity)) { $attempt.reason='AccountChanged'; throw 'Hold' }
             $attempt.reason = 'SnapshotFailed'
             $summary = @{layoutVersion=2;includeImages=$includeImages}
             foreach ($name in $counters) { $summary[$name] = $attempt[$name] }

@@ -15,6 +15,27 @@ BeforeAll {
     $needle = "[Environment]::GetFolderPath('UserProfile')"
     if (-not $text.Contains($needle)) { throw 'Profile seam not found.' }
     [IO.File]::WriteAllText($sessionFile, $text.Replace($needle, "'$($script:ProfileRoot)'"))
+    # Hook files let child scripts (which re-dot-source helpers, defeating Pester mocks) be steered.
+    $script:IdentityHook = Join-Path (Get-TestDriveRoot) 'identity-hook.json'
+    $script:NowHook = Join-Path (Get-TestDriveRoot) 'now-hook.txt'
+    $script:StateHook = Join-Path (Get-TestDriveRoot) 'state-hook.txt'
+    $hookCode = "if ([IO.File]::Exists('$($script:IdentityHook)')) { `$h = [IO.File]::ReadAllText('$($script:IdentityHook)') | ConvertFrom-Json; `$h.count = [int]`$h.count + 1; [IO.File]::WriteAllText('$($script:IdentityHook)', (`$h | ConvertTo-Json -Compress)); if (`$h.count -ge `$h.after) { `$ConfigPath = `$h.alt } }"
+    $sig = 'function Read-ClaudeIdentity([string] $ConfigPath) {'
+    $text = [IO.File]::ReadAllText($sessionFile)
+    if (-not $text.Contains($sig)) { throw 'Identity seam not found.' }
+    [IO.File]::WriteAllText($sessionFile, $text.Replace($sig, "$sig`r`n    $hookCode"))
+    $stateFile = Join-Path $script:Scripts 'LibrarianState.ps1'
+    $text = [IO.File]::ReadAllText($stateFile)
+    $sig = 'function Get-LibrarianStateDirectory {'
+    $probe = 'function Get-LibrarianRepositoryHttpStatus {'
+    if (-not $text.Contains($sig) -or -not $text.Contains($probe)) { throw 'State seam not found.' }
+    $text = $text.Replace($sig, "$sig`r`n    return [IO.File]::ReadAllText('$($script:StateHook)')")
+    [IO.File]::WriteAllText($stateFile, $text.Replace($probe, "$probe`r`n    return 404"))
+    $eveningFile = Join-Path $script:Scripts 'LibrarianEvening.ps1'
+    $text = [IO.File]::ReadAllText($eveningFile)
+    $sig = 'function Get-LibrarianLocalNow { [DateTimeOffset]::Now }'
+    if (-not $text.Contains($sig)) { throw 'Clock seam not found.' }
+    [IO.File]::WriteAllText($eveningFile, $text.Replace($sig, "function Get-LibrarianLocalNow { if ([IO.File]::Exists('$($script:NowHook)')) { [DateTimeOffset]::Parse([IO.File]::ReadAllText('$($script:NowHook)')) } else { [DateTimeOffset]::Now } }"))
     $script:PublishCopy = Join-Path $script:Scripts 'Publish-AnimTeamSessions.ps1'
     $script:PublishOriginal = [IO.File]::ReadAllText($script:PublishCopy)
 
@@ -53,6 +74,10 @@ BeforeAll {
         $dest = Join-Path $script:ProfileRoot ".claude/projects/p1/$([guid]::NewGuid()).jsonl"
         Copy-Item (Join-Path $script:Fixtures "$Fixture.jsonl") $dest
     }
+    function script:Set-Profile([bool]$SignedIn = $true) {
+        $account = if ($SignedIn) { @{ oauthAccount = @{ emailAddress = 'Artist@Example.com'; accountUuid = $script:UserId } } } else { @{} }
+        $account | ConvertTo-Json | Set-Content (Join-Path $script:ProfileRoot '.claude.json')
+    }
     function script:Clear-Sessions {
         Get-ChildItem (Join-Path $script:ProfileRoot '.claude/projects/p1') -Filter *.jsonl | Remove-Item
     }
@@ -79,6 +104,9 @@ BeforeAll {
 
 Describe 'Invoke-LibrarianEvening' {
     BeforeEach {
+        Remove-Item $script:IdentityHook -ErrorAction SilentlyContinue
+        Set-Profile
+        Set-Content $script:NowHook '2026-11-25T22:05:00+00:00'
         Clear-Sessions
         Add-Session 'basic'
         $script:Remote = New-Remote
@@ -125,6 +153,26 @@ Describe 'Invoke-LibrarianEvening' {
         Test-Path (Join-Path $e.Seat 'evening-completed.json') | Should -BeFalse
     }
 
+    It 'holds the batch as AccountChanged when signed out' {
+        Set-Profile $false
+        $e = New-Enrollment
+        $head = Get-RemoteHead $script:Remote
+        Invoke-Due $e | Should -BeFalse
+        (Read-Receipt $e 'evening-attempt.json').reason | Should -Be 'AccountChanged'
+        Get-RemoteHead $script:Remote | Should -Be $head
+    }
+
+    It 'holds the batch as AccountChanged when the account switches mid-collection' {
+        $alt = Join-Path (Get-TestDriveRoot) 'alt-claude.json'
+        @{ oauthAccount = @{ emailAddress = 'Artist@Example.com'; accountUuid = 'acct-2' } } | ConvertTo-Json | Set-Content $alt
+        @{ count = 0; after = 2; alt = $alt } | ConvertTo-Json -Compress | Set-Content $script:IdentityHook
+        $e = New-Enrollment
+        $head = Get-RemoteHead $script:Remote
+        Invoke-Due $e | Should -BeFalse
+        (Read-Receipt $e 'evening-attempt.json').reason | Should -Be 'AccountChanged'
+        Get-RemoteHead $script:Remote | Should -Be $head
+    }
+
     It 'completes despite malformed lines' {
         Add-Session 'malformed'
         $e = New-Enrollment
@@ -154,8 +202,38 @@ Describe 'Invoke-LibrarianEvening' {
         try {
             $e = New-Enrollment
             Invoke-Due $e | Should -BeFalse
-            (Read-Receipt $e 'evening-attempt.json').reason | Should -BeIn @('CollectionIncomplete','CollectionFailed')
+            (Read-Receipt $e 'evening-attempt.json').reason | Should -Be 'CollectionIncomplete'
+            $config = Get-LibrarianConfig $e.Dir
+            (Get-LibrarianEveningStatus $config $e.Seat).status | Should -Be 'RetryPending'
             Test-Path (Join-Path $e.Seat 'evening-completed.json') | Should -BeFalse
         } finally { $stream.Dispose() }
+    }
+}
+
+Describe 'Sync-AnimTeamSessions' {
+    It 'removes a stale snapshot and publishes one batch for the latest due date' {
+        Clear-Sessions
+        Add-Session 'basic'
+        Remove-Item $script:IdentityHook -ErrorAction SilentlyContinue
+        Set-Profile
+        Set-Content $script:NowHook '2026-11-25T22:05:00+00:00'
+        $remote = New-Remote
+        Set-Remote $remote
+        $e = New-Enrollment
+        Set-Content $script:StateHook $e.Dir -NoNewline
+        Write-LibrarianJson (Join-Path $e.Seat 'evening-completed.json') ([ordered]@{
+            enrollmentId = $e.Id; batchDate = '2026-11-22'; status = 'Completed' })
+        $stale = Join-Path $e.Seat 'evening-2026-11-23'
+        New-LibrarianPrivateDirectory $stale
+        New-LibrarianPrivateDirectory (Join-Path $stale 'documents')
+        Write-LibrarianJson (Join-Path $stale 'collection.json') @{ layoutVersion = 2; publicationStarted = $true; includeImages = $false }
+        $before = Get-RemoteCount $remote
+        $out = & (Join-Path $script:Scripts 'Sync-AnimTeamSessions.ps1') -Scheduled | ConvertFrom-Json
+        $LASTEXITCODE | Should -BeIn @($null, 0)
+        Test-Path $stale | Should -BeFalse
+        Get-RemoteCount $remote | Should -Be ($before + 1)
+        $out.status | Should -Be 'Completed'
+        (Read-Receipt $e 'evening-completed.json').batchDate | Should -Be '2026-11-25'
+        (& git "--git-dir=$($remote.Bare)" log -1 --format=%s main) | Should -Be 'Publish evening Claude sessions for 2026-11-25'
     }
 }
