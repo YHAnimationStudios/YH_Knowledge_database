@@ -145,8 +145,8 @@ function Assert-AnimTeamLayout([string]$Base) {
 
 function Get-AnimTeamPublishPictures([string]$Text,[string]$Session) {
     # Transcript text is indented and cannot introduce a publisher-owned image line.
-    foreach ($match in [regex]::Matches($Text,'(?m)^!\[(?:Attached|Generated) image\][^\r\n]*')) {
-        if ($match.Value -cnotmatch '\A!\[(?:Attached|Generated) image\]\((images/([0-9a-f-]{36})/[0-9a-f]{64}\.(?:png|jpg|gif|webp))\)\z' -or
+    foreach ($match in [regex]::Matches($Text,'(?m)^!\[Image attachment\][^\r\n]*')) {
+        if ($match.Value -cnotmatch '\A!\[Image attachment\]\((images/([0-9a-f-]{36})/[0-9a-f]{64}\.(?:png|jpg|gif|webp))\)\z' -or
             $Matches[2] -cne $Session) { throw 'Invalid session image reference.' }
         $Matches[1]
     }
@@ -157,7 +157,7 @@ function Restore-AnimTeamPublishPictures([string]$Local,[string]$Existing,[strin
     # Scope by session, stable item marker and role. Removed or moderated slots cannot reappear.
     $marker = '(?m)^<!-- anim-team-image ([0-9a-f]{64}) -->\r?\n'
     $archived = @{}
-    foreach ($match in [regex]::Matches($Existing, $marker + '(!\[(Attached|Generated) image\]\(images/([0-9a-f-]{36})/([0-9a-f]{64}\.(?:png|jpg|gif|webp))\))(?=\r?$)')) {
+    foreach ($match in [regex]::Matches($Existing, $marker + '(!\[(Image attachment)\]\(images/([0-9a-f-]{36})/([0-9a-f]{64}\.(?:png|jpg|gif|webp))\))(?=\r?$)')) {
         if ($match.Groups[4].Value -cne $Session) { throw 'Invalid archived session image reference.' }
         $leaf = $match.Groups[5].Value
         if ($null -ne $Stored -and !$Stored.ContainsKey($leaf) -and !$stagedImages.ContainsKey("images/$Session/$leaf")) { continue }

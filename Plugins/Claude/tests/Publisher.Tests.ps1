@@ -45,11 +45,25 @@ BeforeAll {
         }
         return @{ Dir = $dir; Ids = @($ids) }
     }
+    function script:Add-Picture {
+        # Adds images/<id>/<sha256>.png under the document directory and links it from the document.
+        param($Docs)
+        $id = $Docs.Ids[0]
+        $bytes = [byte[]](137,80,78,71,13,10,26,10) + [byte[]](1..40)
+        $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        $dir = Join-Path $Docs.Dir "images/$id"
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $dir "$sha.png"), $bytes)
+        $path = Join-Path $Docs.Dir "$id.md"
+        [IO.File]::AppendAllText($path, "`n![Image attachment](images/$id/$sha.png)`n")
+        return "images/$id/$sha.png"
+    }
     function script:New-State { Join-Path (Get-TestDriveRoot) ('state-' + [guid]::NewGuid().ToString('N')) }
     function script:Invoke-Publish {
-        param($Remote, $Docs, [string]$State = (New-State), [string]$BatchDate = '2026-11-25')
+        param($Remote, $Docs, [string]$State = (New-State), [string]$BatchDate = '2026-11-25', [hashtable]$Extra)
         $splat = @{ DocumentDirectory = $Docs.Dir; Email = $script:Email; StateDirectory = $State; RemoteUrl = $Remote.Url }
         if ($BatchDate) { $splat.BatchDate = $BatchDate }
+        if ($Extra) { foreach ($k in $Extra.Keys) { $splat[$k] = $Extra[$k] } }
         return (Publish-AnimTeamSessionDocuments @splat | ConvertFrom-Json)
     }
 }
@@ -138,6 +152,41 @@ Describe 'Publish-AnimTeamSessionDocuments' {
         $docs = New-Documents
         $head = Invoke-TestGit $remote.Bare @('rev-parse', 'main')
         { Invoke-Publish $remote $docs } | Should -Throw '*visibility*'
+        (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
+    }
+
+    It 'publishes a picture referenced by the document' {
+        $remote = New-Remote
+        $docs = New-Documents
+        $rel = Add-Picture $docs
+        $r = Invoke-Publish $remote $docs -Extra @{ IncludeImages = $true }
+        $r.pushed | Should -Be 1
+        $r.pushedImages | Should -Be 1
+        $files = @(Invoke-TestGit $remote.Bare @('ls-tree', '-r', '--name-only', 'main'))
+        $files | Should -Contain "$($script:Seat)/Claude/$rel"
+    }
+
+    It 'refuses a document with a picture when images are not consented' {
+        $remote = New-Remote
+        $docs = New-Documents
+        Add-Picture $docs | Out-Null
+        $head = Invoke-TestGit $remote.Bare @('rev-parse', 'main')
+        { Invoke-Publish $remote $docs } | Should -Throw '*enrollment consent*'
+        (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
+    }
+
+    It 'recovers the recorded commit after a crash using the receipt directory' {
+        $remote = New-Remote
+        $docs = New-Documents
+        $receipts = Join-Path (Get-TestDriveRoot) ('receipts-' + [guid]::NewGuid().ToString('N'))
+        New-LibrarianPrivateDirectory $receipts
+        $first = Invoke-Publish $remote $docs -Extra @{ ReceiptDirectory = $receipts; RequireCompleteBatch = $true }
+        $first.pushed | Should -Be 1
+        Test-Path (Join-Path $receipts 'publish-candidate.json') | Should -BeTrue
+        $head = Invoke-TestGit $remote.Bare @('rev-parse', 'main')
+        $second = Invoke-Publish $remote $docs -State (New-State) -Extra @{ ReceiptDirectory = $receipts; RequireCompleteBatch = $true }
+        $second.recovered | Should -BeTrue
+        $second.commit | Should -Be $first.commit
         (Invoke-TestGit $remote.Bare @('rev-parse', 'main')) | Should -Be $head
     }
 }
