@@ -25,18 +25,28 @@ Repository readers can read the sessions and see everything visible in shared pi
 ## Install or upgrade
 
 1. Sign in to Claude Code with your team seat (claude.ai account). Use Git for Windows with write access to the team repository's `main` branch and PowerShell 7.2 or later.
-2. Extract the release to a permanent folder with its `.claude-plugin` and `plugins` directories. For an existing local marketplace, replace its release files in its registered folder.
-3. In PowerShell 7, open that marketplace folder and run the following commands. On an existing registration you can skip `marketplace add`.
+2. Install the plugin. Use **one** of these routes.
+
+   **From GitHub (recommended).** The repository is private, so Git on this PC must already be signed in to GitHub. Claude Code does not prompt for a password. Git Credential Manager, which comes with Git for Windows, or `gh auth login` followed by `gh auth setup-git`, provides the sign-in. Then run:
+
+   ```powershell
+   claude plugin marketplace add YHAnimationStudios/YH_Knowledge_database
+   claude plugin install sound-team-librarian@yh-team-tools
+   ```
+
+   To upgrade later, run `claude plugin marketplace update yh-team-tools` and `claude plugin update sound-team-librarian@yh-team-tools`.
+
+   **From the release zip.** Extract the release to a permanent folder with its `.claude-plugin` and `plugins` directories, open that folder in PowerShell 7, and run the commands below. On an existing registration, replace the release files in the registered folder and skip `marketplace add`.
 
    ```powershell
    claude plugin marketplace add .
    claude plugin install sound-team-librarian@sound-team-tools
    ```
 
-4. Find the installed scripts and enroll this workstation. `claude plugin list --json` reports the plugin folder in `installPath`.
+3. Find the installed scripts and enroll this workstation. `claude plugin list --json` reports the plugin folder in `installPath`.
 
    ```powershell
-   $p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -eq 'sound-team-librarian@sound-team-tools' } | Select-Object -First 1
+   $p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -like 'sound-team-librarian@*' } | Select-Object -First 1
    $scripts = Join-Path $p.installPath 'scripts'
    & "$scripts\Collect-ClaudeTeamHistory.ps1" -InventoryOnly
    & "$scripts\Configure-AnimLibrarian.ps1" -EnableAccountSync
@@ -56,10 +66,10 @@ A successful upload records the Git commit. An evening with no changes records a
 
 ## Check the result
 
-Open a new PowerShell 7 window and look up the scripts folder again (the same lookup as install step 4), then run the status command.
+Open a new PowerShell 7 window and look up the scripts folder again (the same lookup as install step 3), then run the status command.
 
 ```powershell
-$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -eq 'sound-team-librarian@sound-team-tools' } | Select-Object -First 1
+$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -like 'sound-team-librarian@*' } | Select-Object -First 1
 $scripts = Join-Path $p.installPath 'scripts'
 ```
 
@@ -95,7 +105,7 @@ All of them retry on the normal schedule. Running `Sync-AnimTeamSessions.ps1` ma
 To stop this workstation's future uploads and remove its scheduled task, run the following commands before uninstalling. In a fresh shell, the first two lines look up the scripts folder. Documents already committed stay in GitHub.
 
 ```powershell
-$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -eq 'sound-team-librarian@sound-team-tools' } | Select-Object -First 1
+$p = (claude plugin list --json | ConvertFrom-Json) | Where-Object { $_.id -like 'sound-team-librarian@*' } | Select-Object -First 1
 $scripts = Join-Path $p.installPath 'scripts'
 & "$scripts\Configure-AnimLibrarian.ps1" -DisableAccountSync
 ```

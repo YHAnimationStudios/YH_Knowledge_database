@@ -54,7 +54,7 @@ Describe 'Build-ClaudeLibrarians' {
     It 'zips each team release' {
         $out = Join-Path $TestDrive 'zip'
         & $script:Build -OutputRoot $out -Team anim | Out-Null
-        $zip = Join-Path $out 'anim-team-librarian/releases/anim-team-librarian-0.1.0.zip'
+        $zip = Join-Path $out 'anim-team-librarian/releases/anim-team-librarian-0.1.1.zip'
         $zip | Should -Exist
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $z = [IO.Compression.ZipFile]::OpenRead($zip)
@@ -131,7 +131,7 @@ Describe 'Build-ClaudeLibrarians' {
             & $script:Build -OutputRoot $out -Team anim | Out-Null
             $rel = Join-Path $out 'anim-team-librarian/releases'
             Set-Content -LiteralPath (Join-Path $rel 'junk.txt') -Value 'junk'
-            [IO.File]::AppendAllText((Join-Path $rel 'anim-team-librarian-0.1.0.zip'), 'x')
+            [IO.File]::AppendAllText((Join-Path $rel 'anim-team-librarian-0.1.1.zip'), 'x')
             $null = & $script:Pwsh -NoProfile -File $script:Build -OutputRoot $out -Team anim -Check
             $LASTEXITCODE | Should -Be 0
             & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
@@ -146,5 +146,84 @@ Describe 'Build-ClaudeLibrarians' {
             $LASTEXITCODE | Should -Be 1
             $text | Should -Match 'extra: anim-team-librarian/stray\.txt'
         }
+    }
+}
+
+Describe 'Root catalogue' {
+    BeforeAll {
+        function script:New-CatalogBuild([string]$Name) {
+            $root = Join-Path $TestDrive $Name
+            $out = Join-Path $root 'Plugins/Claude'
+            $cat = Join-Path $root '.claude-plugin/marketplace.json'
+            & $script:Build -OutputRoot $out -CatalogPath $cat -NoZip | Out-Null
+            @{ Root = $root; Out = $out; Catalog = $cat }
+        }
+    }
+
+    It 'lists all five plugins with sources that resolve from the catalogue root' {
+        $b = New-CatalogBuild 'cat-list'
+        $b.Catalog | Should -Exist
+        $c = Get-Content -Raw $b.Catalog | ConvertFrom-Json
+        $c.name | Should -BeExactly 'yh-team-tools'
+        $c.owner.name | Should -BeExactly 'YH Animation Studios'
+        $c.description | Should -Not -BeNullOrEmpty
+        @($c.plugins).Count | Should -Be 5
+        foreach ($slug in $script:Slugs) {
+            $name = "$slug-team-librarian"
+            $e = @($c.plugins | Where-Object name -eq $name)
+            $e.Count | Should -Be 1
+            $e[0].source | Should -BeExactly "./Plugins/Claude/$name/marketplace/plugins/$name"
+            $e[0].PSObject.Properties['version'] | Should -BeNullOrEmpty
+            $manifest = Join-Path $b.Root ($e[0].source.Substring(2) + '/.claude-plugin/plugin.json')
+            $manifest | Should -Exist
+            (Get-Content -Raw $manifest | ConvertFrom-Json).name | Should -BeExactly $name
+        }
+        $bytes = [IO.File]::ReadAllBytes($b.Catalog)
+        ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB) | Should -BeFalse
+        $bytes -contains 13 | Should -BeFalse
+    }
+
+    It 'writes no catalogue for a custom -OutputRoot without -CatalogPath' {
+        $root = Join-Path $TestDrive 'cat-none'
+        & $script:Build -OutputRoot (Join-Path $root 'Plugins/Claude') -NoZip | Out-Null
+        @(Get-ChildItem -LiteralPath $TestDrive -Recurse -Force -Filter 'marketplace.json' |
+            Where-Object { $_.FullName -like '*cat-none*' -and $_.Directory.Parent.FullName -eq $root }).Count | Should -Be 0
+        Join-Path $root '.claude-plugin' | Should -Not -Exist
+    }
+
+    It '-Check fails when the catalogue drifts' {
+        $b = New-CatalogBuild 'cat-check'
+        $null = & $script:Pwsh -NoProfile -File $script:Build -OutputRoot $b.Out -CatalogPath $b.Catalog -Check
+        $LASTEXITCODE | Should -Be 0
+        [IO.File]::AppendAllText($b.Catalog, ' ')
+        $text = (& $script:Pwsh -NoProfile -File $script:Build -OutputRoot $b.Out -CatalogPath $b.Catalog -Check) -join "`n"
+        $LASTEXITCODE | Should -Be 1
+        $text | Should -Match 'marketplace\.json'
+    }
+
+    It 'per-team catalogue entries carry no version' {
+        $out = Join-Path $TestDrive 'cat-team'
+        & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
+        $m = Get-Content -Raw (Join-Path $out 'anim-team-librarian/marketplace/.claude-plugin/marketplace.json') | ConvertFrom-Json
+        $m.plugins[0].PSObject.Properties['version'] | Should -BeNullOrEmpty
+        $p = Get-Content -Raw (Join-Path $out 'anim-team-librarian/marketplace/plugins/anim-team-librarian/.claude-plugin/plugin.json') | ConvertFrom-Json
+        $p.version | Should -BeExactly '0.1.1'
+    }
+
+    It 'removes release zips from other versions' {
+        $out = Join-Path $TestDrive 'cat-zips'
+        $rel = Join-Path $out 'anim-team-librarian/releases'
+        New-Item -ItemType Directory -Path $rel -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $rel 'anim-team-librarian-0.1.0.zip'), 'old')
+        & $script:Build -OutputRoot $out -Team anim | Out-Null
+        Join-Path $rel 'anim-team-librarian-0.1.0.zip' | Should -Not -Exist
+        Join-Path $rel 'anim-team-librarian-0.1.1.zip' | Should -Exist
+    }
+
+    It 'passes claude plugin validate for the root catalogue' -Skip:(-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        $b = New-CatalogBuild 'cat-validate'
+        $o = (& claude plugin validate $b.Root 2>&1) -join "`n"
+        "root ($LASTEXITCODE): $o" | Should -Match '^root \(0\)'
+        $o | Should -Not -Match '(?i)warning'
     }
 }

@@ -86,7 +86,7 @@ function Enable-LibrarianEveningEnrollment([string]$directory,[string]$path,$pre
         includeImages=$imageMode
     }
     # Copy the scripts out of the plugin cache (old versions are deleted on update) before scheduling them.
-    $entry = Install-LibrarianAppCopy $PSScriptRoot (Split-Path -Parent $directory) '0.1.0'
+    $entry = Install-LibrarianAppCopy $PSScriptRoot (Split-Path -Parent $directory) '0.1.1'
     # Publish the configuration first, while the enrollment lock prevents outbound work.
     # A failed native registration restores the previous configuration before releasing it.
     Write-LibrarianJson $path $configuration -Replace
@@ -97,7 +97,7 @@ function Enable-LibrarianEveningEnrollment([string]$directory,[string]$path,$pre
         throw
     }
     # The task now runs the new copy; only now is it safe to drop older ones.
-    Remove-LibrarianAppCopies (Split-Path -Parent $directory) '0.1.0'
+    Remove-LibrarianAppCopies (Split-Path -Parent $directory) '0.1.1'
     return $enrollment
 }
 

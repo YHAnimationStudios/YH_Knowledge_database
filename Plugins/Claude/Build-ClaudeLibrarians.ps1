@@ -6,7 +6,10 @@ Stamps the five Claude team librarian plugins from _template/ and zips each rele
   -Check       render to a temp folder and compare byte for byte with -OutputRoot
                (releases/ ignored); exit 1 and list differing paths on drift
   -NoZip       skip release zips
-Generated folders are build output. Edit _template/ only.
+  -CatalogPath where the repo-root Claude Code catalogue (.claude-plugin/marketplace.json) goes.
+               Defaults to the repository root only when -OutputRoot is the default; a build into a
+               custom -OutputRoot writes no catalogue unless -CatalogPath is given.
+Generated folders and the root catalogue are build output. Edit _template/ only.
 #>
 [CmdletBinding()]
 param(
@@ -14,11 +17,13 @@ param(
     [string[]]$Team,
     [switch]$Check,
     [switch]$NoZip,
-    [string]$TemplateRoot = (Join-Path $PSScriptRoot '_template')   # test seam
+    [string]$TemplateRoot = (Join-Path $PSScriptRoot '_template'),   # test seam
+    [string]$CatalogPath
 )
 $ErrorActionPreference = 'Stop'
 
-$Version = '0.1.0'
+$Version = '0.1.1'
+$CatalogName = 'yh-team-tools'
 $Teams = @(
     @{ Slug = 'anim';          Display = 'Anim Team Librarian';          Folder = 'Animators team';         Id = 'YHAnimTeam';         Member = 'an animator' }
     @{ Slug = '3d-art';        Display = '3D Art Team Librarian';        Folder = '3D art team';            Id = 'YH3DArtTeam';        Member = 'a member of the 3D art team' }
@@ -32,8 +37,33 @@ $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 if (-not $Team) { $Team = $Teams.Slug }
 $unknown = @($Team | Where-Object { $_ -notin $Teams.Slug })
 if ($unknown) { throw "Unknown team(s): $($unknown -join ', '). Valid: $($Teams.Slug -join ', ')" }
+$defaultOutput = -not $PSBoundParameters.ContainsKey('OutputRoot')
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $TemplateRoot = [IO.Path]::GetFullPath($TemplateRoot)
+if (-not $CatalogPath -and $defaultOutput) {
+    $CatalogPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.claude-plugin/marketplace.json'
+}
+if ($CatalogPath) { $CatalogPath = [IO.Path]::GetFullPath($CatalogPath) }
+
+# The repo-root catalogue lets people run `claude plugin marketplace add YHAnimationStudios/YH_Knowledge_database`.
+# It always lists all five plugins; sources are relative to the repository root. No version here: plugin.json owns it.
+function Get-CatalogText {
+    $plugins = foreach ($t in $Teams) {
+        $name = "$($t.Slug)-team-librarian"
+        [ordered]@{
+            name        = $name
+            source      = "./Plugins/Claude/$name/marketplace/plugins/$name"
+            description = "Evening Claude Code session backup for the $($t.Folder)."
+        }
+    }
+    $catalog = [ordered]@{
+        name        = $CatalogName
+        owner       = [ordered]@{ name = 'YH Animation Studios' }
+        description = 'YH Animation Studios team librarians: evening backups of Claude Code sessions to the team knowledge repository.'
+        plugins     = @($plugins)
+    }
+    ((ConvertTo-Json -InputObject $catalog -Depth 6) -replace "`r`n", "`n") + "`n"
+}
 
 function Get-TeamTokens($t) {
     @{
@@ -46,6 +76,7 @@ function Get-TeamTokens($t) {
         '{{PLUGIN_NAME}}'   = "$($t.Slug)-team-librarian"
         '{{MARKETPLACE}}'   = "$($t.Slug)-team-tools"
         '{{VERSION}}'       = $Version
+        '{{CATALOG}}'       = $CatalogName
     }
 }
 
@@ -126,6 +157,13 @@ if ($Check) {
                 if (-not $expected.Contains($rel)) { $drift.Add("extra: $name/$rel") }
             }
         }
+        if ($CatalogPath) {
+            $want = $Utf8NoBom.GetBytes((Get-CatalogText))
+            if (-not (Test-Path -LiteralPath $CatalogPath)) { $drift.Add("missing: $CatalogPath") }
+            elseif (-not [System.Linq.Enumerable]::SequenceEqual([byte[]]$want, [byte[]][IO.File]::ReadAllBytes($CatalogPath))) {
+                $drift.Add("differs: $CatalogPath")
+            }
+        }
     } finally {
         if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
     }
@@ -142,6 +180,19 @@ foreach ($t in $selected) {
     $name = "$($t.Slug)-team-librarian"
     $teamDir = Join-Path $OutputRoot $name
     Write-TeamTree $t $teamDir
-    if (-not $NoZip) { Write-ReleaseZip (Join-Path $teamDir 'marketplace') (Join-Path $OutputRoot "$name/releases/$name-$Version.zip") }
+    if (-not $NoZip) {
+        $current = "$name-$Version.zip"
+        $releases = Join-Path $teamDir 'releases'
+        if (Test-Path -LiteralPath $releases) {   # one installer per team: drop zips from other versions
+            Get-ChildItem -LiteralPath $releases -File -Filter "$name-*.zip" | Where-Object Name -ne $current | Remove-Item -Force
+        }
+        Write-ReleaseZip (Join-Path $teamDir 'marketplace') (Join-Path $releases $current)
+    }
     Write-Output "Built $name"
+}
+
+if ($CatalogPath) {
+    New-Item -ItemType Directory -Path (Split-Path -Parent $CatalogPath) -Force | Out-Null
+    [IO.File]::WriteAllBytes($CatalogPath, $Utf8NoBom.GetBytes((Get-CatalogText)))
+    Write-Output "Wrote catalogue $CatalogPath"
 }

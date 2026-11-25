@@ -3,6 +3,6 @@
   "owner": { "name": "YH Animation Studios" },
   "plugins": [
     { "name": "directors-team-librarian", "source": "./plugins/directors-team-librarian",
-      "description": "Evening Claude Code session backup for the Directors team.", "version": "0.1.0" }
+      "description": "Evening Claude Code session backup for the Directors team." }
   ]
 }
