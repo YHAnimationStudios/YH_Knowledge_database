@@ -5,11 +5,10 @@ $script:TranscriptKeepTypes = @('user', 'assistant', 'custom-title', 'ai-title',
 $script:TranscriptHasDateKind = (Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')
 
 function Read-ClaudeTranscriptRecords([string] $Path) {
+    # Open/read failures must throw whatever the caller's ErrorActionPreference is.
+    $ErrorActionPreference = 'Stop'
     $records = [Collections.Generic.List[hashtable]]::new()
     $malformed = 0
-    # compact_boundary records are not exported, but the first record after one has parentUuid = the boundary's
-    # uuid. Remember uuid -> logicalParentUuid so the active-branch walk can bridge the compaction.
-    $boundaries = @{}
     $stream = [IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
     try {
         $reader = [IO.StreamReader]::new($stream, [Text.UTF8Encoding]::new($false), $true, 65536)
@@ -29,17 +28,16 @@ function Read-ClaudeTranscriptRecords([string] $Path) {
                 }
                 if ($record -isnot [hashtable]) { $malformed++; continue }
                 $type = $record['type']
-                if ($type -is [string] -and $type -ceq 'system' -and $record['subtype'] -ceq 'compact_boundary') {
-                    if ($record['uuid'] -is [string] -and $record['logicalParentUuid'] -is [string]) {
-                        $boundaries[$record['uuid']] = $record['logicalParentUuid']
+                if ($type -isnot [string] -or $script:TranscriptKeepTypes -cnotcontains $type) {
+                    # Other record types (attachment, system incl. stop_hook_summary and compact_boundary, ...)
+                    # can sit in the parent chain. Keep only their ids, never their content.
+                    if ($record['uuid'] -is [string]) {
+                        $records.Add(@{
+                            type = '_link'; uuid = $record['uuid']
+                            parentUuid = $record['parentUuid']; logicalParentUuid = $record['logicalParentUuid']
+                        })
                     }
                     continue
-                }
-                if ($type -isnot [string] -or $script:TranscriptKeepTypes -cnotcontains $type) { continue }
-                if (($type -ceq 'user' -or $type -ceq 'assistant') -and
-                    $record['parentUuid'] -is [string] -and $boundaries.ContainsKey($record['parentUuid']) -and
-                    -not $record.ContainsKey('logicalParentUuid')) {
-                    $record['logicalParentUuid'] = $boundaries[$record['parentUuid']]
                 }
                 $records.Add($record)
             }
@@ -68,12 +66,13 @@ function Select-ClaudeActiveBranch($Records) {
         if ($record['type'] -ceq 'user' -or $record['type'] -ceq 'assistant') { $chat.Add($record) }
     }
     $branch = [Collections.Generic.List[hashtable]]::new()
+    # Every record with a uuid is a node (user, assistant and _link stubs); only user/assistant are emitted.
     $byUuid = @{}
-    $position = [Collections.Generic.Dictionary[hashtable, int]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
-    for ($i = 0; $i -lt $chat.Count; $i++) {
-        $position[$chat[$i]] = $i
-        if ($chat[$i]['uuid'] -is [string]) { $byUuid[$chat[$i]['uuid']] = $chat[$i] }
+    foreach ($record in $Records) {
+        if ($record['uuid'] -is [string]) { $byUuid[$record['uuid']] = $record }
     }
+    $position = [Collections.Generic.Dictionary[hashtable, int]]::new([Collections.Generic.ReferenceEqualityComparer]::Instance)
+    for ($i = 0; $i -lt $chat.Count; $i++) { $position[$chat[$i]] = $i }
     $leaf = $null
     for ($i = $chat.Count - 1; $i -ge 0; $i--) {
         if ($chat[$i]['isSidechain'] -ne $true) { $leaf = $chat[$i]; break }
@@ -86,7 +85,7 @@ function Select-ClaudeActiveBranch($Records) {
     $cur = $leaf
     while ($null -ne $cur) {
         if (-not $visited.Add($cur)) { break }
-        $leafToRoot.Add($cur)
+        if ($cur['type'] -ceq 'user' -or $cur['type'] -ceq 'assistant') { $leafToRoot.Add($cur) }
         $parentId = $cur['parentUuid']
         $logicalId = $cur['logicalParentUuid']
         $next = $null
@@ -99,8 +98,13 @@ function Select-ClaudeActiveBranch($Records) {
         # Broken chain: the branch root's parent is not in the file, so earlier records cannot be linked.
         # Include every earlier non-sidechain record in file order.
         $cut = $position[$leafToRoot[$leafToRoot.Count - 1]]
+        $onBranchUuids = [Collections.Generic.HashSet[string]]::new()
+        foreach ($record in $leafToRoot) { if ($record['uuid'] -is [string]) { [void]$onBranchUuids.Add($record['uuid']) } }
         for ($i = 0; $i -lt $cut; $i++) {
-            if ($chat[$i]['isSidechain'] -ne $true -and -not $visited.Contains($chat[$i])) { $branch.Add($chat[$i]) }
+            $candidate = $chat[$i]
+            if ($candidate['isSidechain'] -eq $true -or $visited.Contains($candidate)) { continue }
+            if ($candidate['uuid'] -is [string] -and -not $onBranchUuids.Add($candidate['uuid'])) { continue }
+            $branch.Add($candidate)
         }
     }
     for ($i = $leafToRoot.Count - 1; $i -ge 0; $i--) { $branch.Add($leafToRoot[$i]) }
@@ -130,15 +134,18 @@ function Get-ClaudeUserParts($Content) {
         }
     }
     $raw = $textBlocks -join "`n"
-    $text = [regex]::Replace($raw, '(?s)<system-reminder>.*?</system-reminder>', '')
-    if ($text.Length -ne $raw.Length) { $text = $text.Trim() }
+    # An unclosed <system-reminder> runs to the end of the text.
+    $text = [regex]::Replace($raw, '(?s)<system-reminder>.*?(?:</system-reminder>|\z)', '')
 
     if ($text -match '<command-name>\s*(/[^<\s]+)\s*</command-name>') {
         $parts.Add(@{ type = 'command'; name = $Matches[1] })
         return , $parts
     }
-    $stripped = [regex]::Replace($text, '(?s)<(command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr)>.*?</\1>', '')
-    if ($text.Trim() -and -not $stripped.Trim()) { return , $parts }
+    $hadText = [bool]$text.Trim()
+    $text = [regex]::Replace($text, '(?s)<(command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr)>.*?</\1>', '')
+    # Nothing but command or shell output was left: drop the record (images included).
+    if ($hadText -and -not $text.Trim()) { return , $parts }
+    if ($text.Length -ne $raw.Length) { $text = $text.Trim() }
     if ($text.Trim()) { $parts.Add(@{ type = 'text'; text = $text }) }
     $ordinal = 0
     foreach ($image in $images) {

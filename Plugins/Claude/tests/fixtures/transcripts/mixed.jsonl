@@ -1,0 +1,5 @@
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"see this <bash-stdout>CMDOUT</bash-stdout> ok"}}
+{"type":"user","uuid":"u2","parentUuid":"u1","timestamp":"2026-11-25T10:00:01.000Z","message":{"role":"user","content":"visible text <system-reminder>REMINDER-LEAK never closed"}}
+{"type":"user","uuid":"u3","parentUuid":"u2","timestamp":"2026-11-25T10:00:02.000Z","message":{"role":"user","content":"<system-reminder>only reminder, unclosed"}}
+{"type":"user","uuid":"u4","parentUuid":"u3","timestamp":"2026-11-25T10:00:03.000Z","message":{"role":"user","content":"<bash-input>ls</bash-input><bash-stdout>CMDOUT</bash-stdout><bash-stderr></bash-stderr>"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u4","timestamp":"2026-11-25T10:00:04.000Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"fine"}]}}

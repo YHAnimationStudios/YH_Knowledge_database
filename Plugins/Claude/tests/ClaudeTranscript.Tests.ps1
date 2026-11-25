@@ -104,6 +104,48 @@ Describe 'ClaudeTranscript' {
         (ConvertTo-Json $m -Depth 8) | Should -Not -Match 'LEAK'
     }
 
+    It 'walks through attachment and stop-hook records without publishing abandoned branches' {
+        $flat = Get-Flat (Get-Messages 'linked.jsonl')
+        $flat | Should -Be @('User:U1', 'Assistant:A1', 'User:U2b', 'Assistant:A2b', 'User:U3', 'Assistant:A3')
+        $read = Read-ClaudeTranscriptRecords (Join-Path $script:Fx 'linked.jsonl')
+        (ConvertTo-Json $read.records -Depth 8) | Should -Not -Match 'ATTACH-SECRET|HOOK-SECRET'
+        (ConvertTo-Json (Get-Messages 'linked.jsonl') -Depth 8) | Should -Not -Match 'SECRET'
+    }
+
+    It 'excludes the abandoned reply before a compaction boundary' {
+        $flat = Get-Flat (Get-Messages 'compact.jsonl')
+        $flat | Should -Not -Contain 'Assistant:abandoned reply'
+    }
+
+    It 'throws when the transcript cannot be opened, whatever the error preference' {
+        $missing = Join-Path (Get-TestDriveRoot) 'nope.jsonl'
+        $old = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            { Read-ClaudeTranscriptRecords $missing } | Should -Throw
+        } finally { $ErrorActionPreference = $old }
+    }
+
+    It 'strips command output and unclosed reminders from mixed text' {
+        $flat = Get-Flat (Get-Messages 'mixed.jsonl')
+        $flat | Should -Be @('User:see this  ok', 'User:visible text', 'Assistant:fine')
+        ($flat -join '|') | Should -Not -Match 'CMDOUT|LEAK|reminder'
+    }
+
+    It 'does not export a replaced duplicate uuid twice in the fallback' {
+        $path = Join-Path (Get-TestDriveRoot) 'dup.jsonl'
+        $lines = @(
+            '{"type":"user","uuid":"d1","parentUuid":null,"timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"old"}}'
+            '{"type":"user","uuid":"d1","parentUuid":null,"timestamp":"2026-11-25T10:00:01.000Z","message":{"role":"user","content":"new"}}'
+            '{"type":"user","uuid":"d2","parentUuid":"missing","timestamp":"2026-11-25T10:00:02.000Z","message":{"role":"user","content":"tail"}}'
+        )
+        [IO.File]::WriteAllLines($path, $lines)
+        $read = Read-ClaudeTranscriptRecords $path
+        $msgs = ConvertTo-ClaudeMessages (Select-ClaudeActiveBranch $read.records)
+        $flat = Get-Flat $msgs
+        @($flat | Where-Object { $_ -like 'User:old' -or $_ -like 'User:new' }).Count | Should -Be 1
+    }
+
     It 'streams a 60000-line transcript' {
         $path = Join-Path (Get-TestDriveRoot) 'big.jsonl'
         $writer = [IO.StreamWriter]::new($path, $false, [Text.UTF8Encoding]::new($false))
