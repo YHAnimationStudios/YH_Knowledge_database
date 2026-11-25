@@ -13,7 +13,8 @@ param(
     [string]$OutputRoot = $PSScriptRoot,
     [string[]]$Team,
     [switch]$Check,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [string]$TemplateRoot = (Join-Path $PSScriptRoot '_template')   # test seam
 )
 $ErrorActionPreference = 'Stop'
 
@@ -25,7 +26,6 @@ $Teams = @(
     @{ Slug = 'directors';     Display = 'Directors Team Librarian';     Folder = 'Directors team';         Id = 'YHDirectorsTeam';    Member = 'a member of the Directors team' }
     @{ Slug = 'sound';         Display = 'Sound Team Librarian';         Folder = 'Sound team';             Id = 'YHSoundTeam';        Member = 'a member of the Sound team' }
 )
-$TemplateRoot = Join-Path $PSScriptRoot '_template/marketplace'
 $LeftoverPattern = '\{\{[A-Z_]+\}\}'
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
@@ -33,6 +33,7 @@ if (-not $Team) { $Team = $Teams.Slug }
 $unknown = @($Team | Where-Object { $_ -notin $Teams.Slug })
 if ($unknown) { throw "Unknown team(s): $($unknown -join ', '). Valid: $($Teams.Slug -join ', ')" }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
+$TemplateRoot = [IO.Path]::GetFullPath($TemplateRoot)
 
 function Get-TeamTokens($t) {
     @{
@@ -52,10 +53,12 @@ function Expand-Tokens([string]$Text, [hashtable]$Tokens) {
     $Text
 }
 
-# Renders <template> into $Dest (which is emptied first). Returns nothing.
+# Renders all of _template/ into $Dest (which is emptied first). Returns nothing.
 function Write-TeamTree($t, [string]$Dest) {
     $tokens = Get-TeamTokens $t
-    if (Test-Path -LiteralPath $Dest) { Remove-Item -LiteralPath $Dest -Recurse -Force }
+    if (Test-Path -LiteralPath $Dest) {   # empty it, but keep releases/ (zips are not template output)
+        Get-ChildItem -LiteralPath $Dest -Force | Where-Object Name -ne 'releases' | Remove-Item -Recurse -Force
+    }
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     $files = Get-ChildItem -LiteralPath $TemplateRoot -Recurse -File -Force | Sort-Object FullName
     foreach ($f in $files) {
@@ -87,11 +90,13 @@ function Write-ReleaseZip([string]$MarketplaceDir, [string]$ZipPath) {
     } finally { $zip.Dispose() }
 }
 
-function Get-FileMap([string]$Dir) {
+function Get-FileMap([string]$Dir, [string]$SkipTop) {
     $map = [ordered]@{}
     if (Test-Path -LiteralPath $Dir) {
         $base = [IO.Path]::GetFullPath($Dir)
         foreach ($f in (Get-ChildItem -LiteralPath $base -Recurse -File -Force | Sort-Object FullName)) {
+            $key = $f.FullName.Substring($base.Length).TrimStart([char]92, '/').Replace([char]92, '/')
+            if ($SkipTop -and ($key -eq $SkipTop -or $key.StartsWith("$SkipTop/"))) { continue }
             $map[($f.FullName.Substring($base.Length).TrimStart('\', '/').Replace([char]92, '/'))] = $f.FullName
         }
     }
@@ -106,18 +111,18 @@ if ($Check) {
     try {
         foreach ($t in $selected) {
             $name = "$($t.Slug)-team-librarian"
-            $expectedDir = Join-Path $tmp "$name/marketplace"
+            $expectedDir = Join-Path $tmp $name
             Write-TeamTree $t $expectedDir
             $expected = Get-FileMap $expectedDir
-            $actual = Get-FileMap (Join-Path $OutputRoot "$name/marketplace")   # releases/ is never scanned
+            $actual = Get-FileMap (Join-Path $OutputRoot $name) -SkipTop 'releases'
             foreach ($rel in $expected.Keys) {
-                $p = "$name/marketplace/$rel"
+                $p = "$name/$rel"
                 if (-not $actual.Contains($rel)) { $drift.Add("missing: $p"); continue }
                 $a = [IO.File]::ReadAllBytes($expected[$rel]); $b = [IO.File]::ReadAllBytes($actual[$rel])
                 if (-not [System.Linq.Enumerable]::SequenceEqual([byte[]]$a, [byte[]]$b)) { $drift.Add("differs: $p") }
             }
             foreach ($rel in $actual.Keys) {
-                if (-not $expected.Contains($rel)) { $drift.Add("extra: $name/marketplace/$rel") }
+                if (-not $expected.Contains($rel)) { $drift.Add("extra: $name/$rel") }
             }
         }
     } finally {
@@ -134,8 +139,8 @@ if ($Check) {
 
 foreach ($t in $selected) {
     $name = "$($t.Slug)-team-librarian"
-    $mkt = Join-Path $OutputRoot "$name/marketplace"
-    Write-TeamTree $t $mkt
-    if (-not $NoZip) { Write-ReleaseZip $mkt (Join-Path $OutputRoot "$name/releases/$name-$Version.zip") }
+    $teamDir = Join-Path $OutputRoot $name
+    Write-TeamTree $t $teamDir
+    if (-not $NoZip) { Write-ReleaseZip (Join-Path $teamDir 'marketplace') (Join-Path $OutputRoot "$name/releases/$name-$Version.zip") }
     Write-Output "Built $name"
 }

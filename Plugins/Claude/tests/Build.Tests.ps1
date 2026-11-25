@@ -67,4 +67,47 @@ Describe 'Build-ClaudeLibrarians' {
         $scripts = New-LibrarianTestPlugin -Team 'directors'
         Join-Path $scripts 'TranscriptText.ps1' | Should -Exist
     }
+
+    Context 'whole-template rendering' {
+        BeforeAll {
+            # Copy of the real template plus a team-root file (as Task 9's README.md will be).
+            $script:Tpl = Join-Path $TestDrive 'tpl'
+            Copy-Item -LiteralPath (Join-Path $script:ClaudeRoot '_template') -Destination $script:Tpl -Recurse
+            Set-Content -LiteralPath (Join-Path $script:Tpl 'README.md') -Value 'Docs for {{DISPLAY_NAME}}' -NoNewline
+        }
+
+        It 'renders files directly under _template/ to the team root and -Check covers them' {
+            $out = Join-Path $TestDrive 'root-file'
+            & $script:Build -OutputRoot $out -Team anim -NoZip -TemplateRoot $script:Tpl | Out-Null
+            $readme = Join-Path $out 'anim-team-librarian/README.md'
+            [IO.File]::ReadAllText($readme) | Should -Be 'Docs for Anim Team Librarian'
+            $null = & $script:Pwsh -NoProfile -File $script:Build -OutputRoot $out -Team anim -Check -TemplateRoot $script:Tpl
+            $LASTEXITCODE | Should -Be 0
+            [IO.File]::AppendAllText($readme, 'x')
+            $text = (& $script:Pwsh -NoProfile -File $script:Build -OutputRoot $out -Team anim -Check -TemplateRoot $script:Tpl) -join "`n"
+            $LASTEXITCODE | Should -Be 1
+            $text | Should -Match 'anim-team-librarian/README\.md'
+        }
+
+        It '-Check ignores changes under releases/ and the build keeps them' {
+            $out = Join-Path $TestDrive 'releases-ignored'
+            & $script:Build -OutputRoot $out -Team anim | Out-Null
+            $rel = Join-Path $out 'anim-team-librarian/releases'
+            Set-Content -LiteralPath (Join-Path $rel 'junk.txt') -Value 'junk'
+            [IO.File]::AppendAllText((Join-Path $rel 'anim-team-librarian-0.1.0.zip'), 'x')
+            $null = & $script:Pwsh -NoProfile -File $script:Build -OutputRoot $out -Team anim -Check
+            $LASTEXITCODE | Should -Be 0
+            & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
+            Join-Path $rel 'junk.txt' | Should -Exist
+        }
+
+        It '-Check reports an extra file in the team folder' {
+            $out = Join-Path $TestDrive 'extra'
+            & $script:Build -OutputRoot $out -Team anim -NoZip | Out-Null
+            Set-Content -LiteralPath (Join-Path $out 'anim-team-librarian/stray.txt') -Value 'x'
+            $text = (& $script:Pwsh -NoProfile -File $script:Build -OutputRoot $out -Team anim -Check) -join "`n"
+            $LASTEXITCODE | Should -Be 1
+            $text | Should -Match 'extra: anim-team-librarian/stray\.txt'
+        }
+    }
 }
