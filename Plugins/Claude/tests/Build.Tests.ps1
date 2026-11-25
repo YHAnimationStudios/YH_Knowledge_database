@@ -68,6 +68,21 @@ Describe 'Build-ClaudeLibrarians' {
         Join-Path $scripts 'TranscriptText.ps1' | Should -Exist
     }
 
+    It 'passes claude plugin validate for every team' -Skip:(-not (Get-Command claude -ErrorAction SilentlyContinue)) {
+        $out = Join-Path $TestDrive 'validate'
+        & $script:Build -OutputRoot $out -NoZip | Out-Null
+        foreach ($slug in $script:Slugs) {
+            $team = Join-Path $out "$slug-team-librarian"
+            $market = Join-Path $team 'marketplace'
+            $plugin = Join-Path $market "plugins/$slug-team-librarian"
+            $o1 = (& claude plugin validate $market 2>&1) -join "`n"
+            "$slug marketplace ($LASTEXITCODE): $o1" | Should -Match "^$slug marketplace \(0\)"
+            $o2 = (& claude plugin validate $plugin 2>&1) -join "`n"
+            "$slug plugin ($LASTEXITCODE): $o2" | Should -Match "^$slug plugin \(0\)"
+            Join-Path $plugin "skills/$slug-team-librarian/SKILL.md" | Should -Exist
+        }
+    }
+
     Context 'whole-template rendering' {
         BeforeAll {
             # Copy of the real template plus a team-root file (as Task 9's README.md will be).
