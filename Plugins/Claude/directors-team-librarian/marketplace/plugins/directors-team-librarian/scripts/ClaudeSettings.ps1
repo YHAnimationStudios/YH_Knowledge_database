@@ -11,8 +11,18 @@ function Read-ClaudeSettingsObject([string] $SettingsPath) {
 
 function Get-ClaudeObjectRetention($Settings) {
     $property = $Settings.PSObject.Properties['cleanupPeriodDays']
-    if ($property -and ($property.Value -is [int] -or $property.Value -is [long]) -and $property.Value -ge 0) {
-        return [int][math]::Min([long]$property.Value, [int]::MaxValue)
+    if ($property) {
+        # Any numeric value counts (5000, 5000.0 or "5000"); it must never be mistaken for absent.
+        $number = 0.0
+        $v = $property.Value
+        $ok = $false
+        if ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) { $number = [double]$v; $ok = $true }
+        elseif ($v -is [string]) {
+            $ok = [double]::TryParse($v.Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)
+        }
+        if ($ok -and -not [double]::IsNaN($number)) {
+            return [int][math]::Floor([math]::Max([math]::Min($number, [double][int]::MaxValue), [double][int]::MinValue))
+        }
     }
     return 30
 }

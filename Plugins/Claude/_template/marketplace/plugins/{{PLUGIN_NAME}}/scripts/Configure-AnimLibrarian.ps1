@@ -96,6 +96,8 @@ function Enable-LibrarianEveningEnrollment([string]$directory,[string]$path,$pre
         if ($previous) { Write-LibrarianJson $path $previous -Replace } else { [IO.File]::Delete($path) }
         throw
     }
+    # The task now runs the new copy; only now is it safe to drop older ones.
+    Remove-LibrarianAppCopies (Split-Path -Parent $directory) '{{VERSION}}'
     return $enrollment
 }
 

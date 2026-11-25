@@ -18,6 +18,7 @@ BeforeAll {
     $script:IdentityHook = Join-Path $script:Root 'cfg-identity-hook.json'
     $script:TaskInfoHook = Join-Path $script:Root 'cfg-taskinfo-hook.json'
     $script:TaskCalls = Join-Path $script:Root 'cfg-task-calls.txt'
+    $script:RegisterFail = Join-Path $script:Root 'cfg-register-fail.txt'
     $script:ProfileRoot = Join-Path $script:Root 'cfg-profile'
     $script:FakePwsh = Join-Path $script:Root 'fake-runtime\pwsh.exe'
     New-Item -ItemType Directory -Path (Split-Path $script:FakePwsh) -Force | Out-Null
@@ -38,6 +39,7 @@ BeforeAll {
 function Register-LibrarianScheduledTask {
     param([string]`$Runtime,[string]`$EntryPoint,[string]`$EveningTime)
     Add-Content '$($script:TaskCalls)' ('register|' + `$Runtime + '|' + `$EntryPoint + '|' + `$EveningTime)
+    if ([IO.File]::Exists('$($script:RegisterFail)')) { throw 'registration failed' }
 }
 function Unregister-LibrarianScheduledTask { Add-Content '$($script:TaskCalls)' 'unregister' }
 function Get-LibrarianScheduledTaskInfo {
@@ -57,7 +59,7 @@ param([switch]`$Scheduled,[switch]`$CheckOnly,[string]`$EnrollmentId)
         $root = Join-Path $script:Root ('cfg-root-' + [guid]::NewGuid().ToString('N'))
         $state = Join-Path $root 'plugin-state'
         Set-Content $script:StateHook $state -NoNewline
-        Remove-Item $script:TaskCalls, $script:TaskInfoHook -ErrorAction SilentlyContinue
+        Remove-Item $script:TaskCalls, $script:TaskInfoHook, $script:RegisterFail -ErrorAction SilentlyContinue
         Remove-Item $script:ProfileRoot -Recurse -Force -ErrorAction SilentlyContinue
         New-Item -ItemType Directory -Path (Join-Path $script:ProfileRoot '.claude') -Force | Out-Null
         @{ email = 'artist@example.com'; userId = 'acct-1' } | ConvertTo-Json | Set-Content $script:IdentityHook
@@ -122,6 +124,28 @@ Describe 'Claude transcript retention' {
         [IO.File]::ReadAllText($path) | Should -Be '{ not json'
     }
 
+    It 'treats <Raw> as 5000 and leaves it alone' -ForEach @(@{ Raw = '5000.0' }, @{ Raw = '"5000"' }, @{ Raw = '5000' }) {
+        $path = Join-Path $script:Root ('ret7-' + [guid]::NewGuid().ToString('N') + '\settings.json')
+        New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
+        $original = '{"cleanupPeriodDays":' + $Raw + '}'
+        [IO.File]::WriteAllText($path, $original)
+        Get-ClaudeTranscriptRetention $path | Should -Be 5000
+        $r = Set-ClaudeTranscriptRetention $path
+        $r.changed | Should -BeFalse
+        $r.after | Should -Be 5000
+        [IO.File]::ReadAllText($path) | Should -Be $original
+    }
+
+    It 'raises a numeric string below the minimum' {
+        $path = Join-Path $script:Root 'ret8\settings.json'
+        New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
+        Set-Content $path '{"cleanupPeriodDays":"90.0"}'
+        $r = Set-ClaudeTranscriptRetention $path
+        $r.before | Should -Be 90
+        $r.changed | Should -BeTrue
+        (Get-Content $path -Raw | ConvertFrom-Json).cleanupPeriodDays | Should -Be 3650
+    }
+
     It 'reports 30 when the key is absent' {
         $path = Join-Path $script:Root 'ret6\settings.json'
         New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
@@ -147,6 +171,9 @@ Describe 'Install-LibrarianAppCopy' {
         $second = Install-LibrarianAppCopy $source $stateRoot '0.1.1'
         $second | Should -BeLike '*app\0.1.1\Sync-AnimTeamSessions.ps1'
         Test-Path $second | Should -BeTrue
+        # Install never prunes; the caller does so once the task points at the new copy.
+        @(Get-ChildItem (Join-Path $stateRoot 'app') | Select-Object -ExpandProperty Name | Sort-Object) | Should -Be @('0.1.0', '0.1.1')
+        Remove-LibrarianAppCopies $stateRoot '0.1.1'
         @(Get-ChildItem (Join-Path $stateRoot 'app') | Select-Object -ExpandProperty Name) | Should -Be @('0.1.1')
         Test-LibrarianPrivateAcl (Join-Path $stateRoot 'app\0.1.1') -RequireProtected | Should -BeTrue
     }
@@ -167,6 +194,30 @@ Describe 'Install-LibrarianAppCopy' {
         $stateRoot = Join-Path $script:Root 'app-root'
         Remove-LibrarianAppCopies $stateRoot $null
         @(Get-ChildItem (Join-Path $stateRoot 'app')).Count | Should -Be 0
+    }
+}
+
+Describe 'Remove-LibrarianAppCopies link safety' {
+    It 'refuses to delete through an app folder that is a junction' {
+        $stateRoot = Join-Path $script:Root 'junc-root'
+        $outside = Join-Path $script:Root 'junc-outside'
+        New-Item -ItemType Directory -Path $stateRoot, (Join-Path $outside 'victimdir') -Force | Out-Null
+        Set-Content (Join-Path $outside 'victimdir\keep.txt') 'x'
+        New-Item -ItemType Junction -Path (Join-Path $stateRoot 'app') -Target $outside | Out-Null
+        { Remove-LibrarianAppCopies $stateRoot $null } | Should -Throw
+        Test-Path (Join-Path $outside 'victimdir\keep.txt') | Should -BeTrue
+    }
+
+    It 'removes a junction child as a link without touching its target' {
+        $stateRoot = Join-Path $script:Root 'junc2-root'
+        $outside = Join-Path $script:Root 'junc2-outside'
+        New-Item -ItemType Directory -Path $stateRoot, (Join-Path $outside 'victimdir') -Force | Out-Null
+        Set-Content (Join-Path $outside 'victimdir\keep.txt') 'x'
+        New-LibrarianPrivateDirectory (Join-Path $stateRoot 'app')
+        New-Item -ItemType Junction -Path (Join-Path $stateRoot 'app\0.0.1') -Target $outside | Out-Null
+        Remove-LibrarianAppCopies $stateRoot $null
+        Test-Path (Join-Path $stateRoot 'app\0.0.1') | Should -BeFalse
+        Test-Path (Join-Path $outside 'victimdir\keep.txt') | Should -BeTrue
     }
 }
 
@@ -265,6 +316,28 @@ Describe 'Configure-AnimLibrarian' {
         $s = New-CfgState
         & $script:Configure -EnableAccountSync -KeepTranscriptRetention | Out-Null
         Test-Path $s.Settings | Should -BeFalse
+    }
+
+    It 'prunes older app copies only after registration succeeds' {
+        $s = New-CfgState
+        New-Item -ItemType Directory -Path $s.Root -Force | Out-Null
+        New-LibrarianPrivateDirectory (Join-Path $s.Root 'app')
+        New-Item -ItemType Directory -Path (Join-Path $s.Root 'app\0.0.9') -Force | Out-Null
+        & $script:Configure -EnableAccountSync | Out-Null
+        Test-Path (Join-Path $s.Root 'app\0.0.9') | Should -BeFalse
+        Test-Path (Join-Path $s.Root 'app\0.1.0\Sync-AnimTeamSessions.ps1') | Should -BeTrue
+    }
+
+    It 'keeps the previous app copy when registration fails during an upgrade' {
+        $s = New-CfgState
+        $old = Join-Path $s.Root 'app\0.0.9'
+        New-Item -ItemType Directory -Path $s.Root -Force | Out-Null
+        New-LibrarianPrivateDirectory (Join-Path $s.Root 'app')
+        New-Item -ItemType Directory -Path $old -Force | Out-Null
+        Set-Content (Join-Path $old 'Sync-AnimTeamSessions.ps1') '# old'
+        Set-Content $script:RegisterFail 'fail'
+        { & $script:Configure -EnableAccountSync } | Should -Throw '*registration failed*'
+        Test-Path (Join-Path $old 'Sync-AnimTeamSessions.ps1') | Should -BeTrue
     }
 
     It 'removes the app copies and unregisters on disable' {

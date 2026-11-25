@@ -37,11 +37,18 @@ function Get-LibrarianPowerShellCandidates {
 function Remove-LibrarianAppCopies([string] $StateRoot, [string] $KeepVersion) {
     $app = Join-Path $StateRoot 'app'
     if (-not [IO.Directory]::Exists($app)) { return }
+    # Never enumerate or delete through a redirected or broadly shared app folder.
+    Assert-LibrarianPrivatePath $app -Protected
     foreach ($entry in [IO.Directory]::GetFileSystemEntries($app)) {
         $name = [IO.Path]::GetFileName($entry)
         if ($KeepVersion -and $name -ieq $KeepVersion) { continue }
         try {
-            if ([IO.Directory]::Exists($entry)) { [IO.Directory]::Delete($entry, $true) } else { [IO.File]::Delete($entry) }
+            $attributes = [IO.File]::GetAttributes($entry)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) {
+                # A link is removed as a link; its target is never followed.
+                if ($attributes -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($entry, $false) } else { [IO.File]::Delete($entry) }
+            } elseif ($attributes -band [IO.FileAttributes]::Directory) { [IO.Directory]::Delete($entry, $true) }
+            else { [IO.File]::Delete($entry) }
         } catch {
             # A copy may still be running from this folder; the next enrollment prunes it.
             Write-Warning "Could not remove old Librarian copy '$entry': $($_.Exception.Message)"
@@ -67,6 +74,6 @@ function Install-LibrarianAppCopy([string] $SourceScripts, [string] $StateRoot, 
             if ([IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
         }
     }
-    Remove-LibrarianAppCopies $StateRoot $Version
+    # Older versions are pruned by the caller only after the scheduled task points at this copy.
     return (Join-Path $target 'Sync-AnimTeamSessions.ps1')
 }
