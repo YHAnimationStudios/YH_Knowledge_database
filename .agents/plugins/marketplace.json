@@ -1,0 +1,68 @@
+{
+  "name": "yh-team-tools",
+  "interface": {
+    "displayName": "YH Team Tools"
+  },
+  "plugins": [
+    {
+      "name": "anim-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./Plugins/Codex/anim-team-librarian/marketplace/plugins/anim-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "3d-art-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./Plugins/Codex/3d-art-team-librarian/marketplace/plugins/3d-art-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "character-art-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./Plugins/Codex/character-art-team-librarian/marketplace/plugins/character-art-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "directors-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./Plugins/Codex/directors-team-librarian/marketplace/plugins/directors-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "sound-team-librarian",
+      "source": {
+        "source": "local",
+        "path": "./Plugins/Codex/sound-team-librarian/marketplace/plugins/sound-team-librarian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
