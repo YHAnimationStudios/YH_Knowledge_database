@@ -1,0 +1,34 @@
+{
+  "name": "yh-team-tools",
+  "owner": {
+    "name": "YH Animation Studios"
+  },
+  "description": "YH Animation Studios team librarians: evening backups of Claude Code sessions to the team knowledge repository.",
+  "plugins": [
+    {
+      "name": "anim-team-librarian",
+      "source": "./Plugins/Claude/anim-team-librarian/marketplace/plugins/anim-team-librarian",
+      "description": "Evening Claude Code session backup for the Animators team."
+    },
+    {
+      "name": "3d-art-team-librarian",
+      "source": "./Plugins/Claude/3d-art-team-librarian/marketplace/plugins/3d-art-team-librarian",
+      "description": "Evening Claude Code session backup for the 3D art team."
+    },
+    {
+      "name": "character-art-team-librarian",
+      "source": "./Plugins/Claude/character-art-team-librarian/marketplace/plugins/character-art-team-librarian",
+      "description": "Evening Claude Code session backup for the Character art team."
+    },
+    {
+      "name": "directors-team-librarian",
+      "source": "./Plugins/Claude/directors-team-librarian/marketplace/plugins/directors-team-librarian",
+      "description": "Evening Claude Code session backup for the Directors team."
+    },
+    {
+      "name": "sound-team-librarian",
+      "source": "./Plugins/Claude/sound-team-librarian/marketplace/plugins/sound-team-librarian",
+      "description": "Evening Claude Code session backup for the Sound team."
+    }
+  ]
+}

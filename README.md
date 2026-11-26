@@ -35,3 +35,5 @@ Install your team’s plugin by its catalog ID. For example, the Animators team 
 | [Character Art Team Librarian](Plugins/Claude/character-art-team-librarian/) | `Usage data/Character art team/<seat-email>/Claude/` |
 | [Directors Team Librarian](Plugins/Claude/directors-team-librarian/) | `Usage data/Directors team/<seat-email>/Claude/` |
 | [Sound Team Librarian](Plugins/Claude/sound-team-librarian/) | `Usage data/Sound team/<seat-email>/Claude/` |
+
+To install a Claude Code librarian straight from this repository, run `claude plugin marketplace add YHAnimationStudios/YH_Knowledge_database` and then `claude plugin install <team>-team-librarian@yh-team-tools`, for example `anim-team-librarian@yh-team-tools`. Git on that PC must already be signed in to GitHub.

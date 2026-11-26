@@ -312,8 +312,8 @@ Describe 'Configure-AnimLibrarian' {
         $out = (& $script:Configure -EnableAccountSync -EveningTime '21:30') | ConvertFrom-Json
         $out.status | Should -Be 'SyncStub'
         $call = (Get-Content $script:TaskCalls) | Where-Object { $_ -like 'register|*' }
-        $call | Should -Be ('register|' + $script:FakePwsh + '|' + (Join-Path $s.Root 'app\0.1.0\Sync-AnimTeamSessions.ps1') + '|21:30')
-        Test-Path (Join-Path $s.Root 'app\0.1.0\Sync-AnimTeamSessions.ps1') | Should -BeTrue
+        $call | Should -Be ('register|' + $script:FakePwsh + '|' + (Join-Path $s.Root 'app\0.1.1\Sync-AnimTeamSessions.ps1') + '|21:30')
+        Test-Path (Join-Path $s.Root 'app\0.1.1\Sync-AnimTeamSessions.ps1') | Should -BeTrue
         $settings = Get-Content $s.Settings -Raw | ConvertFrom-Json
         $settings.cleanupPeriodDays | Should -Be 3650
         $settings.model | Should -Be 'opus'
@@ -325,7 +325,7 @@ Describe 'Configure-AnimLibrarian' {
         [IO.File]::WriteAllText($s.Settings, $original)
         & $script:Configure -EnableAccountSync -KeepTranscriptRetention | Out-Null
         [IO.File]::ReadAllText($s.Settings) | Should -Be $original
-        (Get-Content $script:TaskCalls) | Should -Contain ('register|' + $script:FakePwsh + '|' + (Join-Path $s.Root 'app\0.1.0\Sync-AnimTeamSessions.ps1') + '|22:00')
+        (Get-Content $script:TaskCalls) | Should -Contain ('register|' + $script:FakePwsh + '|' + (Join-Path $s.Root 'app\0.1.1\Sync-AnimTeamSessions.ps1') + '|22:00')
     }
 
     It 'does not create settings.json with -KeepTranscriptRetention when absent' {
@@ -341,7 +341,7 @@ Describe 'Configure-AnimLibrarian' {
         New-Item -ItemType Directory -Path (Join-Path $s.Root 'app\0.0.9') -Force | Out-Null
         & $script:Configure -EnableAccountSync | Out-Null
         Test-Path (Join-Path $s.Root 'app\0.0.9') | Should -BeFalse
-        Test-Path (Join-Path $s.Root 'app\0.1.0\Sync-AnimTeamSessions.ps1') | Should -BeTrue
+        Test-Path (Join-Path $s.Root 'app\0.1.1\Sync-AnimTeamSessions.ps1') | Should -BeTrue
     }
 
     It 'keeps the previous app copy when registration fails during an upgrade' {
@@ -359,7 +359,7 @@ Describe 'Configure-AnimLibrarian' {
     It 'removes the app copies and unregisters on disable' {
         $s = New-CfgState
         & $script:Configure -EnableAccountSync | Out-Null
-        Test-Path (Join-Path $s.Root 'app\0.1.0') | Should -BeTrue
+        Test-Path (Join-Path $s.Root 'app\0.1.1') | Should -BeTrue
         $out = (& $script:Configure -DisableAccountSync) | ConvertFrom-Json
         $out.status | Should -Be 'Disabled'
         (Get-Content $script:TaskCalls) | Should -Contain 'unregister'

@@ -1,6 +1,6 @@
 {
   "name": "character-art-team-librarian",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Back up an enrolled seat's Claude Code sessions and optional pictures to the team GitHub repository every evening.",
   "author": { "name": "YH Animation Studios" }
 }
